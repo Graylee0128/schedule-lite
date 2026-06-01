@@ -1,0 +1,88 @@
+/* schedule-lite 管理台樣式(極簡,無框架) */
+:root {
+  --fg: #1a1a1a;
+  --muted: #888;
+  --border: #ddd;
+  --accent: #2563eb;
+  --ok: #16a34a;
+  --err: #dc2626;
+  --cell: #f1f5f9;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: system-ui, "Segoe UI", "Noto Sans TC", sans-serif;
+  color: var(--fg);
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 4rem;
+  line-height: 1.6;
+}
+
+header h1 { margin-bottom: 0.2rem; }
+.muted { color: var(--muted); font-size: 0.9rem; }
+code { background: #f3f4f6; padding: 0.1em 0.4em; border-radius: 4px; }
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  margin: 1rem 0;
+}
+.card h2 { margin-top: 0; font-size: 1.1rem; }
+
+.row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin: 0.5rem 0; }
+input, select, button { font-size: 0.95rem; padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 6px; }
+button { background: var(--accent); color: #fff; border: none; cursor: pointer; }
+button:hover { opacity: 0.9; }
+
+.list { padding-left: 1.2rem; }
+
+table { border-collapse: collapse; width: 100%; }
+th, td { border: 1px solid var(--border); padding: 0.4rem 0.6rem; text-align: left; }
+
+/* 7×4 格子 */
+.grid { overflow-x: auto; }
+table.grid th, table.grid td { text-align: center; }
+table.grid th:first-child { text-align: left; white-space: nowrap; }
+table.grid .cell { background: var(--cell); color: #475569; min-width: 4.5em; }
+table.grid small { color: var(--muted); font-weight: normal; }
+
+/* 員工填班頁:四態切換色塊(白→綠→黃→紅,點一下循環)。
+   只在 #fillGrid 內生效,不影響管理台的 7×4 預覽。 */
+#fillGrid table.grid td { padding: 0; } /* 讓按鈕填滿整格 */
+.pref {
+  width: 100%;
+  min-height: 44px;       /* 手機觸控目標 */
+  padding: 0.5rem 0.2rem;
+  border: none;
+  border-radius: 0;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.pref-empty { background: #fff;    color: var(--muted); }
+.pref-2     { background: #bbf7d0; color: #166534; } /* 綠:非常想上 */
+.pref-1     { background: #fef08a; color: #854d0e; } /* 黃:可配合 */
+.pref-0     { background: #fecaca; color: #991b1b; } /* 紅:絕對不行 */
+
+/* 管理台缺口 heatmap(可上/需求);綠=足、黃=不足、紅=無人可上 */
+table.cov td { font-variant-numeric: tabular-nums; min-width: 3.5em; }
+.cov-ok    { background: #bbf7d0; color: #166534; }
+.cov-short { background: #fef08a; color: #854d0e; }
+.cov-none  { background: #fecaca; color: #991b1b; }
+
+/* 色塊圖例(填班頁 + 缺口圖例共用) */
+.pref-legend span {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  margin: 0 0.2rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 0.8rem;
+}
+
+/* 狀態列 */
+.status { padding: 0.6rem 1rem; border-radius: 8px; margin: 0.5rem 0; }
+.status.ok { background: #dcfce7; color: var(--ok); }
+.status.error { background: #fee2e2; color: var(--err); }

@@ -1,0 +1,52 @@
+# Walking skeleton 的 compose:app + postgres。
+# Step 1 的 app 還沒碰 postgres;先把 postgres 放這裡,Step 2(migration +
+# /readyz 接 DB ping)只要改一處就能接上。
+services:
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      SL_ADDR: ":8080"
+      SL_LOG_LEVEL: "info"
+      SL_ENV: "dev"
+      # Step 2 起才會使用:
+      SL_DATABASE_URL: "postgres://schedule:schedule@db:5432/schedule_lite?sslmode=disable"
+    depends_on:
+      db:
+        condition: service_healthy # 等 db 健康檢查通過才啟動 app
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: schedule
+      POSTGRES_PASSWORD: schedule
+      POSTGRES_DB: schedule_lite
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data # 資料持久化,重啟不遺失
+    healthcheck:
+      # pg_isready 回 OK 才視為健康
+      test: ["CMD-SHELL", "pg_isready -U schedule -d schedule_lite"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # DB 瀏覽 GUI(等同 phpMyAdmin,但支援 PostgreSQL)。單檔 PHP、極輕量。
+  # 用 profile 關起來:預設 `docker compose up` 不會起它,prod 也不會帶到。
+  # 只有開發要查資料時才開:
+  #   docker compose --profile tools up -d adminer   # 開 http://<host>:8081
+  # 安全:這是 DB 管理介面,僅供 homelab/內網,切勿曝露到公網或 prod。
+  adminer:
+    image: adminer:4
+    profiles: ["tools"]
+    ports:
+      - "8081:8080" # 容器內 adminer 跑 8080,對外用 8081(避開 app 的 8080)
+    environment:
+      ADMINER_DEFAULT_SERVER: db # 進畫面預設帶好 server=db,只要填帳密
+    depends_on:
+      - db
+
+volumes:
+  pgdata: # 具名 volume,存放 postgres 資料

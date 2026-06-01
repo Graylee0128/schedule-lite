@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>schedule-lite 管理台</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>schedule-lite 管理台</h1>
+    <p class="muted">前後端分離示範:純 HTML/CSS/JS,透過 <code>fetch</code> 打 <code>/api/*</code>(同源)。</p>
+  </header>
+
+  <div id="status" class="status" hidden></div>
+
+  <!-- 1. 組織 -->
+  <section class="card">
+    <h2>1. 組織</h2>
+    <div class="row">
+      <label for="orgSelect">選擇組織:</label>
+      <select id="orgSelect"></select>
+    </div>
+    <div class="row">
+      <span class="muted">或新建:</span>
+      <input id="orgName" placeholder="新組織名稱(例:胖老爹)">
+      <button id="createOrg">建立組織</button>
+    </div>
+    <p>目前組織:<strong id="orgId">尚未選擇</strong></p>
+  </section>
+
+  <!-- 2. 門市 -->
+  <section class="card" id="storeSection" hidden>
+    <h2>2. 門市</h2>
+    <div class="row">
+      <input id="storeName" placeholder="門市名稱(例:板橋店)">
+      <button id="createStore">建立門市(自動帶 4 班別)</button>
+    </div>
+    <div class="row">
+      <label for="storeSelect">選擇門市:</label>
+      <select id="storeSelect"></select>
+    </div>
+  </section>
+
+  <!-- 3. 員工 -->
+  <section class="card" id="employeeSection" hidden>
+    <h2>3. 員工</h2>
+    <div class="row">
+      <input id="empName" placeholder="姓名">
+      <input id="empPhone" placeholder="電話(選填)">
+      <button id="createEmp">建立員工</button>
+    </div>
+    <ul id="empList" class="list"></ul>
+    <p class="muted">提示:先在上方選好門市,再點員工的「發填班連結」,連結會綁定該店班別。</p>
+    <div id="linkOut" class="row" hidden>
+      <label for="linkUrl">填班連結(複製給員工):</label>
+      <input id="linkUrl" readonly style="flex:1; min-width:18em">
+    </div>
+  </section>
+
+  <!-- 4. 班別模板 -->
+  <section class="card" id="templateSection" hidden>
+    <h2>4. 班別模板</h2>
+    <table id="templateTable">
+      <thead><tr><th>班別</th><th>起</th><th>迄</th><th>需求人數</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <!-- 5. 週缺口 heatmap(需求 vs 可上) -->
+  <section class="card" id="gridSection" hidden>
+    <div class="row" style="justify-content: space-between">
+      <h2 style="margin: 0">5. 週缺口(需求 vs 可上)</h2>
+      <button id="refreshCoverage">重新整理</button>
+    </div>
+    <p class="muted pref-legend">每格 = 可上/需求 ·
+      <span class="cov-ok">足</span>
+      <span class="cov-short">不足</span>
+      <span class="cov-none">無人可上</span>
+      · 員工填班後按「重新整理」更新
+    </p>
+    <div id="grid"></div>
+  </section>
+
+  <script src="/static/admin/app.js"></script>
+</body>
+</html>

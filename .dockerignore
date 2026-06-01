@@ -1,0 +1,12 @@
+# 不要打包進 image 的東西(縮小 build context)
+# 注意:.dockerignore 不支援行尾註解,註解須自成一行
+# 文件
+*.md
+# 設計文件
+docs/
+# 版控目錄
+.git/
+# 本機編譯產物
+*.exe
+# 編譯輸出
+/out/
