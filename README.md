@@ -23,56 +23,35 @@ Go 1.22 · PostgreSQL 16 · pgx v5 · goose migrations · Docker(multi-stage、d
 
 ---
 
-## 快速測試(從零拉下來跑)
+## 一鍵啟動(乾淨 Linux,只要 Docker)
 
-### 1. 前置
-
-| 工具 | 用途 |
-|---|---|
-| **Docker Desktop**(含 compose) | 必要 — 起 app + postgres |
-| **Go 1.22+** | 第一次跑用來產生 `go.sum`(`deploy.sh` 會自動 `go mod tidy`,之後就不需要) |
-
-確認都裝好:`docker version`、`go version` 有輸出即可。
-
-### 2. 拉專案
+貼這行 —— 自動 **抓 repo → build → 起 app + postgres**,完成後開 <http://localhost:8080/>:
 
 ```bash
-git clone https://github.com/Graylee0128/schedule-lite.git
-cd schedule-lite
+curl -fsSL https://raw.githubusercontent.com/Graylee0128/schedule-lite/main/get.sh | bash
 ```
 
-### 3. 一鍵起服務
+- 只依賴 **Docker + curl**;沒裝 Go 也行(腳本會用 `golang:1.22` 容器產 `go.sum`)。
+- 想先看腳本再跑(建議):
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/Graylee0128/schedule-lite/main/get.sh -o get.sh
+  less get.sh && bash get.sh
+  ```
+- 收掉:`cd ~/schedule-lite && docker compose down`(加 `-v` 連 DB 資料清)。
 
-```bash
-bash scripts/deploy.sh
-```
+> 已經 `git clone` 的話,也可以直接 `bash scripts/deploy.sh`(同樣會自動處理 `go.sum`)。
 
-腳本會:首次自動 `go mod tidy` → `docker compose up --build -d`(app + postgres,等 DB 健康才起 app)
-→ 輪詢 `/healthz` → 印出探針結果。看到 `✓ 部署完成` 就成功了。
+## 開畫面測試一遍
 
-```bash
-# 想驗證的機器不是本機?(例如跑在另一台)
-BASE_URL=http://<該機 ip>:8080 bash scripts/deploy.sh
-```
-
-### 4. 開畫面走一遍
-
-瀏覽器開 **<http://localhost:8080/>**(管理台),依序:
+開 <http://localhost:8080/>(管理台),依序:
 
 1. **建組織**(或從下拉選既有)→ **建門市**(自動帶 4 班別)→ 選門市
-2. **建員工** → 點該員工「**發填班連結**」→ 複製出現的連結 `http://localhost:8080/a/<token>`
+2. **建員工** → 點該員工「**發填班連結**」→ 複製出現的 `http://localhost:8080/a/<token>`
 3. **開新分頁貼上那條連結**(模擬員工,可用手機 / DevTools 手機模擬)→
    點格子切換意願(🟩 非常想上 / 🟨 可配合 / 🟥 絕對不行)→ 按「**儲存我的時段**」
-4. 回管理台第 5 區按「**重新整理**」→ 看到**缺口 heatmap**:剛填的格變綠、無人可上的紅、未填名單列在下方
+4. 回管理台第 5 區按「**重新整理**」→ 看**缺口 heatmap**:剛填的格變綠、無人可上的紅、未填名單列在下方
 
 > ⚠️ 填班連結綁「**產生當下選的那間門市**」。要在大表看到缺口,請確認**管理台正在看的門市 = 連結所屬門市**。
-
-### 5. 收掉
-
-```bash
-bash scripts/teardown.sh        # 停服務(DB 資料保留)
-bash scripts/teardown.sh -v     # 連 DB 資料一起清乾淨
-```
 
 ### (選用)直接看資料庫 — Adminer
 
@@ -123,6 +102,7 @@ curl -sS -X POST $BASE/api/stores -H 'Content-Type: application/json' \
 ## 目錄結構
 
 ```text
+get.sh                      一鍵安裝腳本(curl | bash 用)
 cmd/server/                 進入點(main + 連線 + migration + 路由 + 優雅關閉)
 internal/
   platform/
