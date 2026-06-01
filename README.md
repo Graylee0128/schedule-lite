@@ -32,6 +32,8 @@ curl -fsSL https://raw.githubusercontent.com/Graylee0128/schedule-lite/main/get.
 ```
 
 - 只依賴 **Docker + curl**;沒裝 Go 也行(腳本會用 `golang:1.22` 容器產 `go.sum`)。
+- **8080 被佔用會自動換 port**(往上找空的),腳本最後會印出實際網址,照著開即可。
+  - 想指定 port:`... | APP_PORT=9000 bash`。
 - 想先看腳本再跑(建議):
   ```bash
   curl -fsSL https://raw.githubusercontent.com/Graylee0128/schedule-lite/main/get.sh -o get.sh
