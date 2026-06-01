@@ -1,0 +1,3 @@
+# 確保跨平台一致的換行;shell 腳本一律 LF,否則在 Linux 上 `curl | bash` 會壞。
+* text=auto eol=lf
+*.sh text eol=lf
