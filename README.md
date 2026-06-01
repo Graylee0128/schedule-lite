@@ -34,6 +34,8 @@ curl -fsSL https://raw.githubusercontent.com/Graylee0128/schedule-lite/main/get.
 - 只依賴 **Docker + curl**;沒裝 Go 也行(腳本會用 `golang:1.22` 容器產 `go.sum`)。
 - **8080 被佔用會自動換 port**(往上找空的),腳本最後會印出實際網址,照著開即可。
   - 想指定 port:`... | APP_PORT=9000 bash`。
+- **可安全重跑**:中途失敗(網路斷、port 衝突等)就再貼一次同一行,會自動清理重來,不會把事情搞砸。
+  - 安裝位置預設 `~/schedule-lite`,可用 `WORKDIR=...` 改;非本工具建立的同名資料夾不會被覆蓋(要覆蓋加 `FORCE=1`)。
 - 想先看腳本再跑(建議):
   ```bash
   curl -fsSL https://raw.githubusercontent.com/Graylee0128/schedule-lite/main/get.sh -o get.sh
