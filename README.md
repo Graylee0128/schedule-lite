@@ -16,11 +16,12 @@
 - [x] **Step 5 — 員工填班(availability)+ magic-link**:店長發連結,員工免註冊點開填每週可上時段(三元偏好)。(已在 homelab 驗證)
 - [x] **Step 6 — 缺口分析 heatmap**:每班別 slot 顯示 需求 vs 可上人數、誰沒填;管理台可選既有組織(localStorage 還原);員工頁手機版面。(已在 homelab 驗證)
 - [x] **v1.5 階段 A — 多店一連結(membership)**:token 綁員工(一人一條)、建員工預設加入全店、員工開連結自選門市填班、`not_filled` 改依 membership + 提交標記。(已在 homelab 驗證)
-- [~] **v1.5 階段 B — 小時級 + when2meet 拖曳**:固定 4 班淘汰,改營業時段 + 逐小時需求/供給;員工/老闆共用拖曳塗選網格;缺口 heatmap 改「小時 × 星期」。(實作完成,⏳ 待驗證)
-- [~] **v2 — 排班 + 衝突檢查 + 發布**:逐小時指派(循環週 + 版本快照)、Rule Engine 4 檢查(不可用/跨店雙排=硬;缺口/超週工時=黃)、發布(硬衝突擋)、CSV 匯出、員工看班表 + 回報問題。(實作完成,⏳ 待驗證)
+- [~] **v1.5 階段 B — 小時級 + when2meet 拖曳**:固定 4 班淘汰,改營業時段 + 逐小時需求/供給;員工/老闆共用拖曳塗選網格;缺口 heatmap 改「小時 × 星期」。(後端已在 homelab 驗證;瀏覽器互動待測)
+- [~] **v2 — 排班 + 衝突檢查 + 發布**:逐小時指派(循環週 + 版本快照)、Rule Engine 4 檢查(不可用/跨店雙排=硬;缺口/超週工時=黃)、發布(硬衝突擋)、CSV 匯出、員工看班表 + 回報問題。(後端已在 homelab 驗證;go test + 瀏覽器互動待測)
+- [~] **v3 階段 A — 一鍵建議班表(預排推薦)**:按一鍵用「瓶頸優先貪婪 + 計分」產出建議草稿(只排員工標可上的格 → 零硬衝突),老闆微調後發布。(後端已在 homelab 驗證;瀏覽器待測)
 - [ ] Step 3.5 — 用 sqlc 取代手寫查詢(型別安全)。
 - [ ] v1 收尾 — 店長登入 auth(目前 `/api/*` 無身分驗證)。
-- [ ] v3 — scoring 預排 + 完整雙階段(24h 倒數鎖定)。
+- [ ] v3 階段 B — 填班水位線 + 完整雙階段(24h 倒數鎖定);強制指派覆寫(待拍板)。
 
 > ⚠️ Step 2 第一次加了外部套件(pgx、goose),**先在有 Go 的機器上跑 `go mod tidy` 產生 `go.sum`**,之後才能 `docker build` / `docker compose up --build`。
 
@@ -97,7 +98,7 @@ http://localhost:8080/          # 或 http://<tailscale-ip>:8080/
 
 ### 排班 → 發布 → 員工確認(v2)
 
-1. 管理台第 6 區「排班」:選一位員工 → 選「指派/取消」筆刷 → 在「時段 × 星期」格子**拖曳排班**。格內數字 = 該時段已排/需求;✓ = 排給這位;**紅框** = 他沒把這格標可上(排了就是硬衝突)。存檔即時跑 **Rule Engine**(不可用/跨店雙排=🔴硬;缺口/超週工時=🟡軟)。
+1. 管理台第 6 區「排班」:**最快的方式是按「🪄 一鍵建議排班」**——系統用「瓶頸優先貪婪 + 計分」把員工填的可上時段排成一版建議草稿(只排他們標可上的格,**保證零硬衝突**,排不滿留缺口),老闆再微調。也可手動:選一位員工 → 選「指派/取消」筆刷 → 在「時段 × 星期」格子**拖曳排班**。格內數字 = 該時段已排/需求;✓ = 排給這位;**紅框** = 他沒把這格標可上(排了就是硬衝突)。存檔即時跑 **Rule Engine**(不可用/跨店雙排=🔴硬;缺口/超週工時=🟡軟)。
 2. **發布**:有硬衝突會擋下(回 409 並標紅);排除後發布 → 凍結成快照。要再改就自動開新草稿(複製自已發布版,舊版留存)。
 3. **匯出 CSV**:連續小時自動併成班段(員工/星期/起迄/時數),Excel 可開。
 4. 員工開 `http://<host>:8080/s/<token>`(同一條 token)→ 選門市看自己**已發布**班表 → 點 ✓ 格子**回報「這格有問題」**;老闆端「問題回報」一覽即時看到。
@@ -152,6 +153,7 @@ curl -sS -X POST localhost:8080/api/stores \
 | `GET /api/coverage?store_id=` | 逐小時缺口分析(每格 需求 vs 可上、未填名單依 membership + 提交標記) |
 | `GET /api/schedule?store_id=` | 取/建排班 draft + 候選員工 + 需求 + 指派 + 驗證 + 已發布版的員工問題 |
 | `PUT /api/schedule/assignments?store_id=` | 整批覆寫某員工在 draft 的指派 `{employee_id, slots:[{weekday,hour}]}` → `{assignments, validation}` |
+| `POST /api/schedule/autofill?store_id=` | 一鍵建議排班(預排):整批覆寫 draft → `{suggested, assignments, validation}`(零硬衝突) |
 | `POST /api/schedule/publish?store_id=` | 發布 draft;有硬衝突回 409 + validation |
 | `GET /api/schedule/export?store_id=` | 匯出 CSV(連續小時併班段;優先最近發布版) |
 | `GET /api/employee-availability?store_id=&employee_id=` | 某員工在該店可上格(排班底圖) |

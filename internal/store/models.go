@@ -124,6 +124,14 @@ type ScheduleAssignment struct {
 	Hour       int    `json:"hour"`
 }
 
+// AvailabilityRow 是某店一筆員工可上格(含偏好);供 Rule Engine 與預排取用,不外露 JSON。
+type AvailabilityRow struct {
+	EmployeeID      string
+	Weekday         int
+	Hour            int
+	PreferenceLevel int
+}
+
 // ScheduleEmployee 排班用的員工視圖(含週工時上限,給 Rule Engine 算超時)。
 type ScheduleEmployee struct {
 	ID             string `json:"id"`

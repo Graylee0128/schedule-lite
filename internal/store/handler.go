@@ -55,6 +55,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// v2:排班 grid + Rule Engine + 發布 + 匯出(店長端)。
 	mux.HandleFunc("GET /api/schedule", h.getSchedule)
 	mux.HandleFunc("PUT /api/schedule/assignments", h.putAssignments)
+	mux.HandleFunc("POST /api/schedule/autofill", h.autofillSchedule)
 	mux.HandleFunc("POST /api/schedule/publish", h.publishSchedule)
 	mux.HandleFunc("GET /api/schedule/export", h.exportSchedule)
 	mux.HandleFunc("GET /api/employee-availability", h.getEmployeeAvailability)

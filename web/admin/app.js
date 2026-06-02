@@ -503,6 +503,16 @@ $("saveAssign").addEventListener("click", async () => {
   } catch (e) { showStatus(e.message, true); }
 });
 
+$("autofillSched").addEventListener("click", async () => {
+  if (!confirm("會用系統建議覆蓋整張草稿(你目前手動排的會被取代)。\n建議只排「員工有標可上」的格,保證無硬衝突,排不滿的留缺口。\n確定要產生建議排班?")) return;
+  try {
+    const res = await api("POST", `/api/schedule/autofill?store_id=${storeId}`);
+    showStatus(`已產生建議排班,共排 ${res.suggested} 格(可再微調後發布)`);
+    schedEmpId = null;          // 重排後清掉選取,讓老闆重新挑人檢視
+    await loadSchedule();
+  } catch (e) { showStatus(e.message, true); }
+});
+
 $("publishSched").addEventListener("click", async () => {
   try {
     const res = await api("POST", `/api/schedule/publish?store_id=${storeId}`);

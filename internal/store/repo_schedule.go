@@ -169,25 +169,46 @@ func (r *Repository) ReplaceEmployeeAssignments(ctx context.Context, versionID, 
 	return tx.Commit(ctx)
 }
 
-// StoreAvailabilitySlots 取某店所有員工塗的可上格(preference>=1),給 Rule Engine 判「不可用」。
-func (r *Repository) StoreAvailabilitySlots(ctx context.Context, storeID string) ([]ScheduleAssignment, error) {
+// StoreAvailabilityRows 取某店所有員工塗的可上格(含偏好);Rule Engine 判「不可用」、預排算分共用。
+func (r *Repository) StoreAvailabilityRows(ctx context.Context, storeID string) ([]AvailabilityRow, error) {
 	const q = `
-		SELECT employee_id::text, weekday, hour
+		SELECT employee_id::text, weekday, hour, preference_level
 		FROM availability_slots WHERE store_id = $1::uuid`
 	rows, err := r.pool.Query(ctx, q, storeID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []ScheduleAssignment{}
+	out := []AvailabilityRow{}
 	for rows.Next() {
-		var a ScheduleAssignment
-		if err := rows.Scan(&a.EmployeeID, &a.Weekday, &a.Hour); err != nil {
+		var a AvailabilityRow
+		if err := rows.Scan(&a.EmployeeID, &a.Weekday, &a.Hour, &a.PreferenceLevel); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// ReplaceAllAssignments 整批覆寫某版本的「所有」指派(預排一鍵建議用:先清空整張 draft 再寫入)。
+func (r *Repository) ReplaceAllAssignments(ctx context.Context, versionID string, asgs []ScheduleAssignment) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `DELETE FROM shift_assignments WHERE version_id = $1::uuid`, versionID); err != nil {
+		return err
+	}
+	for _, a := range asgs {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO shift_assignments (version_id, employee_id, weekday, hour)
+			VALUES ($1::uuid, $2::uuid, $3, $4)`, versionID, a.EmployeeID, a.Weekday, a.Hour); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 // CrossStoreBusy 取這些員工在「其他店最近一版已發布班表」裡被排的格(跨店雙排判斷用)。
