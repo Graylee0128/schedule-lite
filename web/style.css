@@ -83,6 +83,7 @@ table.cov td { font-variant-numeric: tabular-nums; min-width: 3.5em; }
 .cov-ok    { background: #bbf7d0; color: #166534; }
 .cov-short { background: #fef08a; color: #854d0e; }
 .cov-none  { background: #fecaca; color: #991b1b; }
+.supply    { background: #dbeafe; color: #1e3a8a; } /* 藍:還沒設需求,只顯示可上人數(供給) */
 
 /* 色塊圖例(填班頁 + 缺口圖例共用) */
 .pref-legend span {
@@ -93,6 +94,20 @@ table.cov td { font-variant-numeric: tabular-nums; min-width: 3.5em; }
   border-radius: 4px;
   font-size: 0.8rem;
 }
+
+/* v2 排班格(管理台):已指派/不可用警示 */
+.assign-on   { background: #bbf7d0; color: #166534; font-weight: 600; } /* 綠:已排給此員工 */
+.assign-warn { box-shadow: inset 0 0 0 2px #dc2626; }                   /* 紅框:此員工沒標可上(排了=硬衝突) */
+
+/* v2 驗證摘要文字 */
+.vio-hard { color: var(--err); margin: 0.2rem 0; }
+.vio-soft { color: #854d0e; margin: 0.2rem 0; }
+.ok-text  { color: var(--ok); }
+
+/* v2 員工看自己班表 */
+table.grid td.my-cell { font-weight: 600; }
+.my-on    { background: #bbf7d0; color: #166534; }
+.my-issue { background: #fed7aa; color: #9a3412; } /* 橘:已回報問題 */
 
 /* 狀態列 */
 .status { padding: 0.6rem 1rem; border-radius: 8px; margin: 0.5rem 0; }

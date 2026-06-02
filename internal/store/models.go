@@ -105,3 +105,93 @@ type Coverage struct {
 	Cells     []CoverageCell `json:"cells"`
 	NotFilled []IDName       `json:"not_filled"` // 發了連結但還沒提交的員工
 }
+
+// --- v2:排班 / Rule Engine / 發布 ---
+
+// ScheduleVersion 一張範本週班表的版本(draft 編輯中 / published 已凍結)。
+type ScheduleVersion struct {
+	ID          string     `json:"id"`
+	StoreID     string     `json:"store_id"`
+	Status      string     `json:"status"`
+	CreatedAt   time.Time  `json:"created_at"`
+	PublishedAt *time.Time `json:"published_at,omitempty"`
+}
+
+// ScheduleAssignment 逐小時指派:某員工被排在 (weekday, hour) 這一格。
+type ScheduleAssignment struct {
+	EmployeeID string `json:"employee_id"`
+	Weekday    int    `json:"weekday"`
+	Hour       int    `json:"hour"`
+}
+
+// ScheduleEmployee 排班用的員工視圖(含週工時上限,給 Rule Engine 算超時)。
+type ScheduleEmployee struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	MaxWeeklyHours int    `json:"max_weekly_hours"`
+}
+
+// Violation 一筆規則違反(硬=擋發布、軟=黃標不擋)。
+type Violation struct {
+	Kind         string `json:"kind"`     // unavailable / double_booked / overtime
+	Severity     string `json:"severity"` // hard / soft
+	EmployeeID   string `json:"employee_id"`
+	EmployeeName string `json:"employee_name"`
+	Weekday      int    `json:"weekday"`
+	Hour         int    `json:"hour"` // overtime 類為 -1(非單一格)
+	Message      string `json:"message"`
+}
+
+// UnderStaffed 一個 (weekday, hour) 缺口:已排 < 需求(黃標,不擋)。
+type UnderStaffed struct {
+	Weekday  int `json:"weekday"`
+	Hour     int `json:"hour"`
+	Required int `json:"required"`
+	Assigned int `json:"assigned"`
+}
+
+// ValidationReport Rule Engine 的輸出。Publishable=無硬違反才能發布。
+type ValidationReport struct {
+	Hard         []Violation    `json:"hard"`
+	Soft         []Violation    `json:"soft"`
+	Understaffed []UnderStaffed `json:"understaffed"`
+	Publishable  bool           `json:"publishable"`
+}
+
+// ScheduleIssue 員工在已發布班表上標記的問題格。
+type ScheduleIssue struct {
+	EmployeeID   string `json:"employee_id"`
+	EmployeeName string `json:"employee_name"`
+	Weekday      int    `json:"weekday"`
+	Hour         int    `json:"hour"`
+	Note         string `json:"note"`
+}
+
+// ScheduleContext 老闆排班頁的一次性資料包。
+type ScheduleContext struct {
+	Version      ScheduleVersion      `json:"version"`
+	OpenHour     int                  `json:"open_hour"`
+	CloseHour    int                  `json:"close_hour"`
+	Employees    []ScheduleEmployee   `json:"employees"`
+	Requirements []Requirement        `json:"requirements"`
+	Assignments  []ScheduleAssignment `json:"assignments"`
+	Validation   ValidationReport     `json:"validation"`
+	Issues       []ScheduleIssue      `json:"issues"` // 最近一版 published 的員工標記
+}
+
+// HourCell 是 (weekday, hour) 的精簡格(員工看自己班表 / 標問題用)。
+type HourCell struct {
+	Weekday int    `json:"weekday"`
+	Hour    int    `json:"hour"`
+	Note    string `json:"note,omitempty"`
+}
+
+// MyScheduleContext 員工看自己在某店「已發布」班表 + 自己標的問題。
+type MyScheduleContext struct {
+	Store       IDName     `json:"store"`
+	OpenHour    int        `json:"open_hour"`
+	CloseHour   int        `json:"close_hour"`
+	Published   bool       `json:"published"` // 該店是否已有發布版本
+	Assignments []HourCell `json:"assignments"`
+	Issues      []HourCell `json:"issues"`
+}

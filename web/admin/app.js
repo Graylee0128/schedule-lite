@@ -18,6 +18,13 @@ let openHour = 9, closeHour = 22;
 let reqGrid = null;  // 需求 PaintGrid
 let reqBrush = 1;    // 需求筆刷(要幾人;0=清除)
 
+// v2:排班。schedData 是 GET /api/schedule 的整包;schedEmpId 是目前編排哪位員工。
+let schedData = null;
+let schedEmpId = null;
+let schedGrid = null;
+let schedAvail = new Set();   // 目前員工在該店的可上格 key 集合
+let assignBrush = 1;          // 排班筆刷:1=指派 / 0=取消
+
 // --- 共用工具 ---
 
 function showStatus(msg, isError) {
@@ -39,7 +46,11 @@ async function api(method, path, body) {
   const res = await fetch(path, opts);
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
-  if (!res.ok) throw new Error((data && data.error) || ("HTTP " + res.status));
+  if (!res.ok) {
+    const err = new Error((data && data.error) || ("HTTP " + res.status));
+    err.body = data; // 讓呼叫端能讀 4xx 的額外欄位(如 publish 409 的 validation)
+    throw err;
+  }
   return data;
 }
 
@@ -136,7 +147,8 @@ function selectStore(id) {
   const show = !!storeId;
   $("settingsSection").hidden = !show;
   $("gridSection").hidden = !show;
-  if (show) loadStoreSettings();
+  $("scheduleSection").hidden = !show;
+  if (show) { loadStoreSettings(); loadSchedule(); }
 }
 
 // --- 3. 員工 ---
@@ -328,29 +340,27 @@ function coverageClass(c) {
 }
 
 function renderCoverage(cov) {
-  // 只畫後端回的格子(有需求或有人可上的時段),依小時列出。
-  const byHour = {}; // hr -> {wd -> cell}
-  cov.cells.forEach((c) => { (byHour[c.hour] = byHour[c.hour] || {})[c.weekday] = c; });
-  const hrs = Object.keys(byHour).map(Number).sort((a, b) => a - b);
-
-  if (hrs.length === 0) {
-    $("grid").innerHTML = "<p class='muted'>這間店還沒設需求、也還沒有人填可上時段。先到上方設定營業時段與需求人數。</p>";
-    return;
-  }
+  // 一律畫「營業時段內的完整網格」,後端回的格子(有需求或有人可上)疊上去。
+  // 這樣即使還沒設需求,員工填的「可上人數(供給)」也會即時顯示——對齊 when2meet 供給先行。
+  const idx = {}; // key(wd,hr) -> cell
+  cov.cells.forEach((c) => { idx[c.weekday * 100 + c.hour] = c; });
 
   let html = "<div class='grid'><table class='cov'><thead><tr><th>時段</th>";
   WEEKDAYS.forEach((d) => (html += `<th>${d}</th>`));
   html += "</tr></thead><tbody>";
-  hrs.forEach((hr) => {
+  for (let hr = cov.open_hour; hr < cov.close_hour; hr++) {
     const hh = String(hr).padStart(2, "0") + ":00";
     html += `<tr><th>${hh}</th>`;
     for (let wd = 0; wd < 7; wd++) {
-      const c = byHour[hr][wd];
-      if (!c) { html += "<td></td>"; continue; }
-      html += `<td class='${coverageClass(c)}' title='非常想上 ${c.want}・可配合 ${c.ok}'>${c.available}/${c.required}</td>`;
+      const c = idx[wd * 100 + hr];
+      if (!c) { html += "<td></td>"; continue; } // 無需求也無人可上 → 留白
+      // 有需求 → 顯示「可上/需求」並依缺口上色;沒需求只顯示供給人數(藍,供給先行)。
+      const label = c.required > 0 ? `${c.available}/${c.required}` : `${c.available}`;
+      const cls = c.required > 0 ? coverageClass(c) : (c.available > 0 ? "supply" : "");
+      html += `<td class='${cls}' title='非常想上 ${c.want}・可配合 ${c.ok}'>${label}</td>`;
     }
     html += "</tr>";
-  });
+  }
   html += "</tbody></table></div>";
 
   if (cov.not_filled && cov.not_filled.length) {
@@ -362,6 +372,178 @@ function renderCoverage(cov) {
 }
 
 $("refreshCoverage").addEventListener("click", () => { if (storeId) loadCoverage(); });
+
+// 切回這個分頁時自動重抓缺口:員工在別的裝置/分頁填完,老闆切回來就看到更新,免手動按。
+window.addEventListener("focus", () => { if (storeId) loadCoverage(); });
+
+// --- 6. 排班(v2:逐小時指派 + Rule Engine + 發布)---
+
+const skey = (wd, hr) => wd * 100 + hr;
+
+// 載入排班草稿:員工下拉、需求/指派、驗證、問題標記。
+async function loadSchedule() {
+  try {
+    schedData = await api("GET", `/api/schedule?store_id=${storeId}`);
+    renderEmpSelect();
+    renderAssignBrushBar();
+    renderSchedGrid();
+    renderValidation();
+    renderIssues();
+  } catch (e) { showStatus(e.message, true); }
+}
+
+function renderEmpSelect() {
+  const sel = $("schedEmp");
+  sel.innerHTML = '<option value="">-- 選要排的員工 --</option>';
+  schedData.employees.forEach((e) => {
+    const o = document.createElement("option");
+    o.value = e.id;
+    o.textContent = `${e.name}(上限 ${e.max_weekly_hours}h)`;
+    sel.appendChild(o);
+  });
+  if (schedEmpId && schedData.employees.some((e) => e.id === schedEmpId)) sel.value = schedEmpId;
+  else schedEmpId = null;
+}
+
+function renderAssignBrushBar() {
+  const bar = $("assignBrush");
+  bar.innerHTML = "";
+  [{ v: 1, t: "指派" }, { v: 0, t: "取消" }].forEach((b) => {
+    const btn = document.createElement("button");
+    btn.textContent = b.t;
+    btn.dataset.v = b.v;
+    btn.classList.toggle("active", b.v === assignBrush);
+    btn.addEventListener("click", () => {
+      assignBrush = b.v;
+      bar.querySelectorAll("button").forEach((x) =>
+        x.classList.toggle("active", parseInt(x.dataset.v, 10) === assignBrush));
+    });
+    bar.appendChild(btn);
+  });
+}
+
+// 已排人數(全員,來自最近一次載入;存檔後刷新)。
+function assignedCounts() {
+  const m = {};
+  (schedData.assignments || []).forEach((a) => { m[skey(a.weekday, a.hour)] = (m[skey(a.weekday, a.hour)] || 0) + 1; });
+  return m;
+}
+function requiredMap() {
+  const m = {};
+  (schedData.requirements || []).forEach((r) => { m[skey(r.weekday, r.hour)] = r.headcount; });
+  return m;
+}
+
+function applyAssignCell(td, wd, hr, counts, reqs) {
+  const key = skey(wd, hr);
+  const assigned = td.dataset.assigned === "1";
+  const avail = schedAvail.has(key);
+  const req = reqs[key] || 0;
+  const cnt = counts[key] || 0;
+  td.className = "paint" + (assigned ? " assign-on" : "") + (!avail && schedEmpId ? " assign-warn" : "");
+  td.textContent = assigned ? "✓" : (req > 0 ? `${cnt}/${req}` : "");
+}
+
+function renderSchedGrid() {
+  const hours = [];
+  for (let hr = schedData.open_hour; hr < schedData.close_hour; hr++) hours.push(hr);
+  const counts = assignedCounts();
+  const reqs = requiredMap();
+  const empAssigned = new Set(
+    (schedData.assignments || []).filter((a) => a.employee_id === schedEmpId).map((a) => skey(a.weekday, a.hour)));
+
+  schedGrid = createPaintGrid({
+    container: $("schedGrid"),
+    hours,
+    initCell: (td, wd, hr) => {
+      td.dataset.assigned = empAssigned.has(skey(wd, hr)) ? "1" : "0";
+      applyAssignCell(td, wd, hr, counts, reqs);
+    },
+    onPaint: (td, wd, hr) => {
+      if (!schedEmpId) return;
+      td.dataset.assigned = assignBrush === 1 ? "1" : "0";
+      applyAssignCell(td, wd, hr, counts, reqs);
+    },
+    onColHeader: (wd) => hours.forEach((hr) => schedEmpId && paintAssign(wd, hr, counts, reqs)),
+    onRowHeader: (hr) => { for (let wd = 0; wd < 7; wd++) schedEmpId && paintAssign(wd, hr, counts, reqs); },
+  });
+}
+function paintAssign(wd, hr, counts, reqs) {
+  const td = schedGrid.cellAt(wd, hr);
+  td.dataset.assigned = assignBrush === 1 ? "1" : "0";
+  applyAssignCell(td, wd, hr, counts, reqs);
+}
+
+async function selectSchedEmp(id) {
+  schedEmpId = id || null;
+  schedAvail = new Set();
+  if (schedEmpId) {
+    try {
+      const slots = await api("GET", `/api/employee-availability?store_id=${storeId}&employee_id=${schedEmpId}`);
+      slots.forEach((s) => schedAvail.add(skey(s.weekday, s.hour)));
+    } catch (e) { showStatus(e.message, true); }
+  }
+  renderSchedGrid();
+}
+$("schedEmp").addEventListener("change", (e) => selectSchedEmp(e.target.value));
+
+$("saveAssign").addEventListener("click", async () => {
+  if (!schedEmpId) return showStatus("請先選一位員工", true);
+  const slots = [];
+  for (let hr = schedData.open_hour; hr < schedData.close_hour; hr++)
+    for (let wd = 0; wd < 7; wd++)
+      if (schedGrid.cellAt(wd, hr).dataset.assigned === "1") slots.push({ weekday: wd, hour: hr });
+  try {
+    const res = await api("PUT", `/api/schedule/assignments?store_id=${storeId}`, { employee_id: schedEmpId, slots });
+    schedData.assignments = res.assignments;
+    schedData.validation = res.validation;
+    renderSchedGrid();
+    renderValidation();
+    showStatus(`已存 ${slots.length} 格班`);
+  } catch (e) { showStatus(e.message, true); }
+});
+
+$("publishSched").addEventListener("click", async () => {
+  try {
+    const res = await api("POST", `/api/schedule/publish?store_id=${storeId}`);
+    schedData.validation = res.validation;
+    renderValidation();
+    showStatus("班表已發布 ✅");
+    await loadSchedule(); // 發布後會開新 draft(複製自剛發布版)
+  } catch (e) {
+    // 409:有硬衝突,後端回 validation;標出來。
+    if (e.body && e.body.validation) { schedData.validation = e.body.validation; renderValidation(); }
+    showStatus(e.message, true);
+  }
+});
+
+$("exportSched").addEventListener("click", () => {
+  window.open(`/api/schedule/export?store_id=${storeId}`, "_blank");
+});
+
+function renderValidation() {
+  const v = schedData.validation || { hard: [], soft: [], understaffed: [], publishable: true };
+  let html = "";
+  if (v.hard.length === 0 && v.soft.length === 0 && v.understaffed.length === 0) {
+    html = "<span class='ok-text'>✓ 無衝突、無缺口</span>";
+  } else {
+    if (v.hard.length) html += `<p class='vio-hard'>🔴 硬衝突 ${v.hard.length}(擋發布):` +
+      v.hard.map((x) => `${x.employee_name} ${WEEKDAYS[x.weekday]}${x.hour}:00 ${x.message}`).join("；") + "</p>";
+    if (v.understaffed.length) html += `<p class='vio-soft'>🟡 缺口 ${v.understaffed.length}:` +
+      v.understaffed.map((u) => `${WEEKDAYS[u.weekday]}${u.hour}:00 (${u.assigned}/${u.required})`).join("、") + "</p>";
+    if (v.soft.length) html += `<p class='vio-soft'>🟡 軟警告 ${v.soft.length}:` +
+      v.soft.map((x) => x.message).join("；") + "</p>";
+  }
+  html += `<p class='muted'>發布狀態:${v.publishable ? "可發布" : "有硬衝突,不可發布"}</p>`;
+  $("validation").innerHTML = html;
+}
+
+function renderIssues() {
+  const issues = (schedData && schedData.issues) || [];
+  if (!issues.length) { $("issues").innerHTML = "<p class='muted'>目前已發布班表沒有員工回報問題。</p>"; return; }
+  $("issues").innerHTML = "<p class='muted'>⚠️ 員工回報(已發布班表):" +
+    issues.map((i) => `${i.employee_name} ${WEEKDAYS[i.weekday]}${i.hour}:00${i.note ? "(" + i.note + ")" : ""}`).join("、") + "</p>";
+}
 
 // --- 啟動:載入既有組織清單,還原上次選的組織 ---
 

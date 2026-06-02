@@ -76,6 +76,10 @@ func run() error {
 	mux.HandleFunc("GET /a/{token}", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFileFS(w, r, web.Files, "staff/availability.html")
 	})
+	// 員工看自己班表頁(v2):/s/{token},JS 用 token 打 /api/my-schedule。
+	mux.HandleFunc("GET /s/{token}", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFileFS(w, r, web.Files, "staff/schedule.html")
+	})
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,

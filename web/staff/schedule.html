@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>我的班表</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>我的班表</h1>
+    <p class="muted">查看店長發布的班表。點自己被排到的格子(✓)可回報「這格有問題」。</p>
+  </header>
+
+  <div id="status" class="status" hidden></div>
+  <p id="loading" class="muted">載入中…</p>
+  <section class="card" id="fatal" hidden></section>
+
+  <section class="card" id="pickerSection" hidden>
+    <p>嗨 <strong id="empNameTop"></strong>,選一間門市看你的班表:</p>
+    <div id="storePicker" class="row"></div>
+  </section>
+
+  <section class="card" id="schedSection" hidden>
+    <p><strong id="storeName"></strong> 的班表(列=時段、欄=星期):</p>
+    <p class="muted pref-legend">
+      <span class="my-on">✓ 你的班</span>
+      <span class="my-issue">⚠ 已回報問題</span>
+      · 點 ✓ 格子回報問題
+    </p>
+    <div id="schedGrid"></div>
+    <p id="noPublish" class="muted" hidden>店長還沒發布這間店的班表。</p>
+  </section>
+
+  <script src="/static/staff/schedule.js"></script>
+</body>
+</html>

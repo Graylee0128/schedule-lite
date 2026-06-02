@@ -81,13 +81,37 @@
       <h2 style="margin: 0">5. 缺口(需求 vs 可上)</h2>
       <button id="refreshCoverage">重新整理</button>
     </div>
-    <p class="muted pref-legend">每格 = 可上/需求 ·
+    <p class="muted pref-legend">有需求時每格 = 可上/需求 ·
       <span class="cov-ok">足</span>
       <span class="cov-short">不足</span>
       <span class="cov-none">無人可上</span>
-      · 只列出有需求或有人可上的時段;員工填班後按「重新整理」更新
+      <span class="supply">未設需求(只顯示可上人數)</span>
+      · 切回此分頁會自動更新,也可按「重新整理」
     </p>
     <div id="grid"></div>
+  </section>
+
+  <!-- 6. 排班(逐小時指派 + 衝突檢查 + 發布) -->
+  <section class="card" id="scheduleSection" hidden>
+    <div class="row" style="justify-content: space-between">
+      <h2 style="margin: 0">6. 排班(指派 → 檢查 → 發布)</h2>
+      <span>
+        <button id="publishSched">發布班表</button>
+        <button id="exportSched" class="ghost">匯出 CSV</button>
+      </span>
+    </div>
+    <div class="row">
+      <label for="schedEmp">排哪位:</label>
+      <select id="schedEmp"></select>
+      <span id="assignBrush" class="row" style="margin:0"></span>
+    </div>
+    <p class="muted">選員工 → 選「指派/取消」筆刷 → 在格子上拖曳排他的班。格子數字=該時段已排/需求;<span class="assign-on" style="padding:0 .3em">✓</span>=已排給他;紅框=他沒把這格標可上(排了會是硬衝突)。</p>
+    <div id="schedGrid"></div>
+    <div class="row">
+      <button id="saveAssign">儲存這位的班</button>
+    </div>
+    <div id="validation" class="muted" style="margin-top:.6rem"></div>
+    <div id="issues"></div>
   </section>
 
   <script src="/static/dragGrid.js"></script>

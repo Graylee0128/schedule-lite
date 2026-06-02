@@ -51,6 +51,17 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 	// Step 6:缺口分析。
 	mux.HandleFunc("GET /api/coverage", h.getCoverage)
+
+	// v2:排班 grid + Rule Engine + 發布 + 匯出(店長端)。
+	mux.HandleFunc("GET /api/schedule", h.getSchedule)
+	mux.HandleFunc("PUT /api/schedule/assignments", h.putAssignments)
+	mux.HandleFunc("POST /api/schedule/publish", h.publishSchedule)
+	mux.HandleFunc("GET /api/schedule/export", h.exportSchedule)
+	mux.HandleFunc("GET /api/employee-availability", h.getEmployeeAvailability)
+
+	// v2:員工看自己班表 + 簡化雙階段(標記問題)。
+	mux.HandleFunc("GET /api/my-schedule", h.getMySchedule)
+	mux.HandleFunc("POST /api/my-schedule/issues", h.postMyIssue)
 }
 
 func (h *Handler) createOrganization(w http.ResponseWriter, r *http.Request) {
