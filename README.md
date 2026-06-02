@@ -35,20 +35,27 @@
 
 ## 本機跑起來
 
-### 0. 第一次:產生 go.sum
+### 方式 A:零設定一鍵(全新機器,最推薦)
+
+只要有 **Docker**(連 Go 都不用裝),一行把整包抓下來、build、起服務、驗探針:
 
 ```bash
-go mod tidy   # 解析 pgx / goose 並產生 go.sum(只需做一次,之後改 deps 才要)
+curl -fsSL https://raw.githubusercontent.com/Graylee0128/schedule-lite/main/get.sh | bash
 ```
 
-### 方式 A:腳本一鍵(推薦)
+- 預設裝到目前目錄下的 `schedule-lite/`,服務起在 <http://localhost:8080>。
+- `go.sum` 用容器自動產生;埠衝突(8080/5432)會自動換埠;**可重複執行**(中途失敗再跑一次不會壞)。
+- 收掉:`cd schedule-lite && bash scripts/teardown.sh`。
+
+### 方式 B:已 clone,用部署腳本
 
 ```bash
-bash scripts/deploy.sh     # 自動 tidy(首次)+ build + 起 compose + 驗證探針
+go mod tidy                # 第一次:解析 pgx/goose 產生 go.sum(沒裝 Go 就用方式 A)
+bash scripts/deploy.sh     # build + 起 compose + 驗證探針
 bash scripts/teardown.sh   # 收掉(加 -v 連 DB 資料一起清)
 ```
 
-### 方式 B:手動 compose(app + postgres)
+### 方式 C:手動 compose(app + postgres)
 
 ```bash
 docker compose up --build
@@ -57,7 +64,7 @@ curl http://localhost:8080/healthz   # → {"status":"ok"}
 curl http://localhost:8080/readyz    # → {"status":"ready"}(DB 通才會 ready)
 ```
 
-### 方式 C:host 上 go run(postgres 仍用 compose 起)
+### 方式 D:host 上 go run(postgres 仍用 compose 起)
 
 ```bash
 docker compose up -d db              # 只起 postgres
