@@ -108,13 +108,23 @@ type Coverage struct {
 
 // --- v2:排班 / Rule Engine / 發布 ---
 
-// ScheduleVersion 一張範本週班表的版本(draft 編輯中 / published 已凍結)。
+// ScheduleVersion 一張範本週班表的版本(draft 編輯 / published 確認中 / locked 定案)。
 type ScheduleVersion struct {
-	ID          string     `json:"id"`
-	StoreID     string     `json:"store_id"`
-	Status      string     `json:"status"`
-	CreatedAt   time.Time  `json:"created_at"`
-	PublishedAt *time.Time `json:"published_at,omitempty"`
+	ID              string     `json:"id"`
+	StoreID         string     `json:"store_id"`
+	Status          string     `json:"status"`
+	CreatedAt       time.Time  `json:"created_at"`
+	PublishedAt     *time.Time `json:"published_at,omitempty"`
+	ConfirmDeadline *time.Time `json:"confirm_deadline,omitempty"` // v3-B:發布時 = now()+24h(軟截止,只顯示)
+}
+
+// Confirmation 員工對某版本的確認狀態(v3-B 兩階段提交)。
+type Confirmation struct {
+	EmployeeID   string     `json:"employee_id"`
+	EmployeeName string     `json:"employee_name"`
+	Status       string     `json:"status"` // pending / confirmed / declined
+	Reason       string     `json:"reason"`
+	RespondedAt  *time.Time `json:"responded_at,omitempty"`
 }
 
 // ScheduleAssignment 逐小時指派:某員工被排在 (weekday, hour) 這一格。
@@ -176,15 +186,19 @@ type ScheduleIssue struct {
 }
 
 // ScheduleContext 老闆排班頁的一次性資料包。
+// Version 是目前可編輯的 draft;Published 是最近一版「已發布/已鎖定」的版本(給確認面板看),
+// 可能為 nil(還沒發布過)。Confirmations / Issues 都是 Published 那版的。
 type ScheduleContext struct {
-	Version      ScheduleVersion      `json:"version"`
-	OpenHour     int                  `json:"open_hour"`
-	CloseHour    int                  `json:"close_hour"`
-	Employees    []ScheduleEmployee   `json:"employees"`
-	Requirements []Requirement        `json:"requirements"`
-	Assignments  []ScheduleAssignment `json:"assignments"`
-	Validation   ValidationReport     `json:"validation"`
-	Issues       []ScheduleIssue      `json:"issues"` // 最近一版 published 的員工標記
+	Version       ScheduleVersion      `json:"version"`
+	OpenHour      int                  `json:"open_hour"`
+	CloseHour     int                  `json:"close_hour"`
+	Employees     []ScheduleEmployee   `json:"employees"`
+	Requirements  []Requirement        `json:"requirements"`
+	Assignments   []ScheduleAssignment `json:"assignments"`
+	Validation    ValidationReport     `json:"validation"`
+	Published     *ScheduleVersion     `json:"published,omitempty"` // 最近發布/鎖定版(含 status + 截止)
+	Confirmations []Confirmation       `json:"confirmations"`       // Published 那版的員工確認狀態
+	Issues        []ScheduleIssue      `json:"issues"`              // Published 那版的員工標記
 }
 
 // HourCell 是 (weekday, hour) 的精簡格(員工看自己班表 / 標問題用)。
@@ -194,12 +208,15 @@ type HourCell struct {
 	Note    string `json:"note,omitempty"`
 }
 
-// MyScheduleContext 員工看自己在某店「已發布」班表 + 自己標的問題。
+// MyScheduleContext 員工看自己在某店「已發布」班表 + 自己標的問題 + 確認狀態(v3-B)。
 type MyScheduleContext struct {
 	Store       IDName     `json:"store"`
 	OpenHour    int        `json:"open_hour"`
 	CloseHour   int        `json:"close_hour"`
-	Published   bool       `json:"published"` // 該店是否已有發布版本
+	Published   bool       `json:"published"`          // 該店是否已有發布/鎖定版本
+	Locked      bool       `json:"locked"`             // 該版本是否已鎖定(定案,不可再回應)
+	MyStatus    string     `json:"my_status"`          // 我的確認狀態:pending/confirmed/declined
+	Deadline    *time.Time `json:"deadline,omitempty"` // 確認截止(軟性,只顯示)
 	Assignments []HourCell `json:"assignments"`
 	Issues      []HourCell `json:"issues"`
 }

@@ -19,9 +19,10 @@
 - [~] **v1.5 階段 B — 小時級 + when2meet 拖曳**:固定 4 班淘汰,改營業時段 + 逐小時需求/供給;員工/老闆共用拖曳塗選網格;缺口 heatmap 改「小時 × 星期」。(後端已在 homelab 驗證;瀏覽器互動待測)
 - [~] **v2 — 排班 + 衝突檢查 + 發布**:逐小時指派(循環週 + 版本快照)、Rule Engine 4 檢查(不可用/跨店雙排=硬;缺口/超週工時=黃)、發布(硬衝突擋)、CSV 匯出、員工看班表 + 回報問題。(後端已在 homelab 驗證;go test + 瀏覽器互動待測)
 - [~] **v3 階段 A — 一鍵建議班表(預排推薦)**:按一鍵用「瓶頸優先貪婪 + 計分」產出建議草稿(只排員工標可上的格 → 零硬衝突),老闆微調後發布。(後端已在 homelab 驗證;瀏覽器待測)
+- [~] **v3 階段 B — 完整兩階段提交**:發布 → 員工「接受整週 / 回報(=回絕)」→ 老闆看確認狀態 + 24h 倒數 → 手動「🔒 鎖定」定案(`draft→published→locked`)。(實作完成,⏳ 待驗證)
 - [ ] Step 3.5 — 用 sqlc 取代手寫查詢(型別安全)。
-- [ ] v1 收尾 — 店長登入 auth(目前 `/api/*` 無身分驗證)。
-- [ ] v3 階段 B — 填班水位線 + 完整雙階段(24h 倒數鎖定);強制指派覆寫(待拍板)。
+- [ ] v1 收尾 — 店長登入 auth(目前 `/api/*` 無身分驗證;**上 prod 前補**)。
+- [ ] 之後 — 填班水位線、24h 自動鎖、強制指派覆寫(待拍板)、k8s + Argo CD 部署軌(**上 prod 前**)。
 
 > ⚠️ Step 2 第一次加了外部套件(pgx、goose),**先在有 Go 的機器上跑 `go mod tidy` 產生 `go.sum`**,之後才能 `docker build` / `docker compose up --build`。
 
@@ -96,12 +97,13 @@ http://localhost:8080/          # 或 http://<tailscale-ip>:8080/
 2. 把連結傳給員工;員工**免註冊**點開 → **先選門市**(只列他被指派的店,單店自動進)→ 在「時段 × 星期」網格用 when2meet 式**拖曳塗選**意願(未塗=不能上),按儲存。
 3. token 只存 SHA-256 hash;一人一條長期連結,可跨其門市分別填班。重開會帶出先前填的(整批覆寫),並記「已提交」標記(缺口的「未填名單」據此判斷)。
 
-### 排班 → 發布 → 員工確認(v2)
+### 排班 → 發布 → 員工確認 → 鎖定(v2 + v3)
 
-1. 管理台第 6 區「排班」:**最快的方式是按「🪄 一鍵建議排班」**——系統用「瓶頸優先貪婪 + 計分」把員工填的可上時段排成一版建議草稿(只排他們標可上的格,**保證零硬衝突**,排不滿留缺口),老闆再微調。也可手動:選一位員工 → 選「指派/取消」筆刷 → 在「時段 × 星期」格子**拖曳排班**。格內數字 = 該時段已排/需求;✓ = 排給這位;**紅框** = 他沒把這格標可上(排了就是硬衝突)。存檔即時跑 **Rule Engine**(不可用/跨店雙排=🔴硬;缺口/超週工時=🟡軟)。
-2. **發布**:有硬衝突會擋下(回 409 並標紅);排除後發布 → 凍結成快照。要再改就自動開新草稿(複製自已發布版,舊版留存)。
-3. **匯出 CSV**:連續小時自動併成班段(員工/星期/起迄/時數),Excel 可開。
-4. 員工開 `http://<host>:8080/s/<token>`(同一條 token)→ 選門市看自己**已發布**班表 → 點 ✓ 格子**回報「這格有問題」**;老闆端「問題回報」一覽即時看到。
+1. 管理台第 6 區「排班」:**最快是按「🪄 一鍵建議排班」**(v3-A)——系統用「瓶頸優先貪婪 + 計分」把員工填的可上時段排成建議草稿(只排他們標可上的格,**保證零硬衝突**,排不滿留缺口),老闆再微調。也可手動:選員工 → 「指派/取消」筆刷 → 拖曳排班。格內數字 = 已排/需求;✓ = 排給這位;**紅框** = 他沒標可上(排了就是硬衝突)。存檔即時跑 **Rule Engine**(不可用/跨店雙排=🔴硬;缺口/超週工時=🟡軟)。
+2. **發布**:有硬衝突擋下(409 標紅);排除後發布 → 凍結快照,並對有班的員工發出**確認**(24h 軟截止)。要再改就自動開新草稿(複製自已發布/鎖定版,舊版留存)。
+3. **員工確認**(v3-B):員工開 `http://<host>:8080/s/<token>` → 選門市看自己**已發布**班表 →「✅ 接受整週」或點 ✓ 格子**回報問題(= 回絕,附理由)**。老闆第 6 區看每位 ✅/⚠️/⏳ + 倒數。
+4. **鎖定**:老闆按「🔒 鎖定」→ 版本 `locked` 定案(未全確認會提醒;店長說了算)。鎖定後員工不可再回應;要改需重新發布新版。
+5. **匯出 CSV**:連續小時自動併成班段(員工/星期/起迄/時數),Excel 可開。
 
 ## API(Step 3)
 
@@ -154,11 +156,13 @@ curl -sS -X POST localhost:8080/api/stores \
 | `GET /api/schedule?store_id=` | 取/建排班 draft + 候選員工 + 需求 + 指派 + 驗證 + 已發布版的員工問題 |
 | `PUT /api/schedule/assignments?store_id=` | 整批覆寫某員工在 draft 的指派 `{employee_id, slots:[{weekday,hour}]}` → `{assignments, validation}` |
 | `POST /api/schedule/autofill?store_id=` | 一鍵建議排班(預排):整批覆寫 draft → `{suggested, assignments, validation}`(零硬衝突) |
-| `POST /api/schedule/publish?store_id=` | 發布 draft;有硬衝突回 409 + validation |
+| `POST /api/schedule/publish?store_id=` | 發布 draft;有硬衝突回 409 + validation;成功 seed 員工確認 + 24h 截止 |
+| `POST /api/schedule/lock?store_id=` | 老闆鎖定最近發布版(`locked` 定案);無已發布回 400 |
 | `GET /api/schedule/export?store_id=` | 匯出 CSV(連續小時併班段;優先最近發布版) |
 | `GET /api/employee-availability?store_id=&employee_id=` | 某員工在該店可上格(排班底圖) |
-| `GET /api/my-schedule?token=&store_id=` | 員工看自己在該店已發布班表 + 自己標的問題 |
-| `POST /api/my-schedule/issues?token=&store_id=` | 員工標記自己某格有問題 `{weekday, hour, note}` |
+| `GET /api/my-schedule?token=&store_id=` | 員工看自己在該店已發布班表 + 確認狀態 + 截止 + 是否鎖定 |
+| `POST /api/my-schedule/confirm?token=&store_id=` | 員工「接受整週」→ confirmed(鎖定後擋) |
+| `POST /api/my-schedule/issues?token=&store_id=` | 員工標記某格有問題 `{weekday, hour, note}`(= 回絕,設 declined + 理由) |
 
 > 註:`/api/*`(店長端)尚無身分驗證(任何人可呼叫)——auth 留後續步驟。
 > 員工端 `/api/me` `/api/availability` 靠 magic-link 的 **token** 認證(token 只存 SHA-256 hash);token **綁員工**,可跨其 membership 的多店填班。

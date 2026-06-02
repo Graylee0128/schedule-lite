@@ -19,11 +19,11 @@ func isUniqueViolation(err error) bool {
 
 func scanVersion(row rowScanner) (ScheduleVersion, error) {
 	var v ScheduleVersion
-	err := row.Scan(&v.ID, &v.StoreID, &v.Status, &v.CreatedAt, &v.PublishedAt)
+	err := row.Scan(&v.ID, &v.StoreID, &v.Status, &v.CreatedAt, &v.PublishedAt, &v.ConfirmDeadline)
 	return v, err
 }
 
-const versionCols = `id::text, store_id::text, status, created_at, published_at`
+const versionCols = `id::text, store_id::text, status, created_at, published_at, confirm_deadline`
 
 // GetOrCreateDraft 取某店「目前可編輯的 draft」;沒有就建。
 // 規則:若最近一版是 published,新 draft **複製** 該 published 的指派(延續編輯,舊版留存)。
@@ -48,7 +48,7 @@ func (r *Repository) GetOrCreateDraft(ctx context.Context, storeID string) (Sche
 	var pubID *string
 	if err := tx.QueryRow(ctx, `
 		SELECT id::text FROM schedule_versions
-		WHERE store_id = $1::uuid AND status = 'published'
+		WHERE store_id = $1::uuid AND status IN ('published', 'locked')
 		ORDER BY published_at DESC NULLS LAST LIMIT 1`, storeID).Scan(&pubID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return ScheduleVersion{}, err
 	}
@@ -81,10 +81,10 @@ func (r *Repository) GetOrCreateDraft(ctx context.Context, storeID string) (Sche
 	return newDraft, nil
 }
 
-// LatestPublishedVersion 取某店最近一版已發布班表;沒有則 ok=false。
+// LatestPublishedVersion 取某店最近一版「已發布或已鎖定」班表(員工確認/看班表/匯出都看這版);沒有則 ok=false。
 func (r *Repository) LatestPublishedVersion(ctx context.Context, storeID string) (ScheduleVersion, bool, error) {
 	v, err := scanVersion(r.pool.QueryRow(ctx, `SELECT `+versionCols+`
-		FROM schedule_versions WHERE store_id = $1::uuid AND status = 'published'
+		FROM schedule_versions WHERE store_id = $1::uuid AND status IN ('published', 'locked')
 		ORDER BY published_at DESC NULLS LAST LIMIT 1`, storeID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ScheduleVersion{}, false, nil
@@ -92,11 +92,80 @@ func (r *Repository) LatestPublishedVersion(ctx context.Context, storeID string)
 	return v, err == nil, err
 }
 
-// PublishDraft 把某店目前 draft 設為 published(凍結)。沒有 draft 回 pgx.ErrNoRows。
+// PublishDraft 把某店目前 draft 設為 published 並設 24h 軟截止。沒有 draft 回 pgx.ErrNoRows。
 func (r *Repository) PublishDraft(ctx context.Context, storeID string) (ScheduleVersion, error) {
 	return scanVersion(r.pool.QueryRow(ctx, `
-		UPDATE schedule_versions SET status = 'published', published_at = now()
+		UPDATE schedule_versions
+		SET status = 'published', published_at = now(), confirm_deadline = now() + interval '24 hours'
 		WHERE store_id = $1::uuid AND status = 'draft'
+		RETURNING `+versionCols, storeID))
+}
+
+// SeedConfirmations 對某版本「有班的員工」各建一筆 pending 確認(發布時呼叫)。
+func (r *Repository) SeedConfirmations(ctx context.Context, versionID string) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO shift_confirmations (version_id, employee_id)
+		SELECT DISTINCT version_id, employee_id FROM shift_assignments WHERE version_id = $1::uuid
+		ON CONFLICT DO NOTHING`, versionID)
+	return err
+}
+
+// ListConfirmations 取某版本的員工確認狀態(含姓名)。
+func (r *Repository) ListConfirmations(ctx context.Context, versionID string) ([]Confirmation, error) {
+	const q = `
+		SELECT c.employee_id::text, e.name, c.status, c.reason, c.responded_at
+		FROM shift_confirmations c
+		JOIN employees e ON e.id = c.employee_id
+		WHERE c.version_id = $1::uuid
+		ORDER BY e.name`
+	rows, err := r.pool.Query(ctx, q, versionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Confirmation{}
+	for rows.Next() {
+		var c Confirmation
+		if err := rows.Scan(&c.EmployeeID, &c.EmployeeName, &c.Status, &c.Reason, &c.RespondedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// SetConfirmation upsert 某員工對某版本的確認狀態(confirmed / declined + 理由)。
+func (r *Repository) SetConfirmation(ctx context.Context, versionID, employeeID, status, reason string) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO shift_confirmations (version_id, employee_id, status, reason, responded_at)
+		VALUES ($1::uuid, $2::uuid, $3, $4, now())
+		ON CONFLICT (version_id, employee_id)
+		DO UPDATE SET status = EXCLUDED.status, reason = EXCLUDED.reason, responded_at = now()`,
+		versionID, employeeID, status, reason)
+	return err
+}
+
+// EmployeeConfirmationStatus 取某員工對某版本的確認狀態(沒紀錄當 pending)。
+func (r *Repository) EmployeeConfirmationStatus(ctx context.Context, versionID, employeeID string) (string, error) {
+	var status string
+	err := r.pool.QueryRow(ctx, `
+		SELECT status FROM shift_confirmations WHERE version_id = $1::uuid AND employee_id = $2::uuid`,
+		versionID, employeeID).Scan(&status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "pending", nil
+	}
+	return status, err
+}
+
+// LockVersion 把某店最近一版 published 設為 locked(定案)。沒有 published 回 pgx.ErrNoRows。
+func (r *Repository) LockVersion(ctx context.Context, storeID string) (ScheduleVersion, error) {
+	return scanVersion(r.pool.QueryRow(ctx, `
+		UPDATE schedule_versions SET status = 'locked'
+		WHERE id = (
+			SELECT id FROM schedule_versions
+			WHERE store_id = $1::uuid AND status = 'published'
+			ORDER BY published_at DESC NULLS LAST LIMIT 1
+		)
 		RETURNING `+versionCols, storeID))
 }
 

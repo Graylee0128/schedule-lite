@@ -388,6 +388,7 @@ async function loadSchedule() {
     renderAssignBrushBar();
     renderSchedGrid();
     renderValidation();
+    renderConfirmations();
     renderIssues();
   } catch (e) { showStatus(e.message, true); }
 }
@@ -547,6 +548,43 @@ function renderValidation() {
   html += `<p class='muted'>發布狀態:${v.publishable ? "可發布" : "有硬衝突,不可發布"}</p>`;
   $("validation").innerHTML = html;
 }
+
+// 兩階段確認面板:顯示已發布版狀態 + 倒數 + 每位員工確認狀態。
+function renderConfirmations() {
+  const box = $("confirmPanel");
+  const pub = schedData.published;
+  if (!pub) { box.innerHTML = "<p class='muted'>尚未發布;發布後員工才會在自己班表頁收到「確認」。</p>"; return; }
+  const confs = schedData.confirmations || [];
+  const ok = confs.filter((c) => c.status === "confirmed").length;
+  const no = confs.filter((c) => c.status === "declined").length;
+  const pend = confs.length - ok - no;
+  const locked = pub.status === "locked";
+
+  let head = `已發布版本:<strong>${locked ? "🔒 已鎖定(定案)" : "確認中"}</strong>`;
+  if (!locked && pub.confirm_deadline) head += ` · 截止 ${new Date(pub.confirm_deadline).toLocaleString()}`;
+  head += ` · ✅ ${ok} / ⚠️ ${no} / ⏳ ${pend}`;
+  const icon = (s) => (s === "confirmed" ? "✅" : s === "declined" ? "⚠️" : "⏳");
+  let html = `<p class='muted'>${head}</p>`;
+  if (confs.length) {
+    html += "<ul class='list'>" + confs.map((c) =>
+      `<li>${icon(c.status)} ${c.employee_name}${c.status === "declined" && c.reason ? `(回絕:${c.reason})` : ""}</li>`).join("") + "</ul>";
+  }
+  box.innerHTML = html;
+}
+
+$("lockSched").addEventListener("click", async () => {
+  const confs = (schedData && schedData.confirmations) || [];
+  if (!schedData.published) return showStatus("還沒發布,無法鎖定", true);
+  const pending = confs.filter((c) => c.status !== "confirmed").length;
+  let msg = "鎖定後此版定案、不可再改(要改需重新發布新版)。";
+  if (pending > 0) msg += `\n⚠️ 還有 ${pending} 人未確認或已回絕,仍要鎖定?`;
+  if (!confirm(msg)) return;
+  try {
+    await api("POST", `/api/schedule/lock?store_id=${storeId}`);
+    showStatus("已鎖定班表 🔒");
+    await loadSchedule();
+  } catch (e) { showStatus(e.message, true); }
+});
 
 function renderIssues() {
   const issues = (schedData && schedData.issues) || [];

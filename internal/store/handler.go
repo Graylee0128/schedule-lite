@@ -57,11 +57,13 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/schedule/assignments", h.putAssignments)
 	mux.HandleFunc("POST /api/schedule/autofill", h.autofillSchedule)
 	mux.HandleFunc("POST /api/schedule/publish", h.publishSchedule)
+	mux.HandleFunc("POST /api/schedule/lock", h.lockSchedule)
 	mux.HandleFunc("GET /api/schedule/export", h.exportSchedule)
 	mux.HandleFunc("GET /api/employee-availability", h.getEmployeeAvailability)
 
-	// v2:員工看自己班表 + 簡化雙階段(標記問題)。
+	// v2/v3-B:員工看自己班表 + 雙階段(確認 / 標記問題=回絕)。
 	mux.HandleFunc("GET /api/my-schedule", h.getMySchedule)
+	mux.HandleFunc("POST /api/my-schedule/confirm", h.confirmMySchedule)
 	mux.HandleFunc("POST /api/my-schedule/issues", h.postMyIssue)
 }
 

@@ -83,6 +83,45 @@ async function selectStore(storeId) {
     $("schedSection").hidden = false;
     $("noPublish").hidden = ctx.published;
     renderGrid();
+    renderConfirmBar();
+  } catch (e) { showStatus(e.message, true); }
+}
+
+// 兩階段:顯示我的確認狀態 + 截止,提供「接受整週」按鈕(已鎖定/已確認則不顯示)。
+function renderConfirmBar() {
+  const bar = $("confirmBar");
+  bar.innerHTML = "";
+  if (!ctx.published) return;
+  const status = ctx.my_status;
+  const label = document.createElement("span");
+  label.className = "muted";
+  if (ctx.locked) {
+    label.textContent = "🔒 班表已定案。";
+  } else if (status === "confirmed") {
+    label.textContent = "✅ 你已確認這週班表。";
+  } else if (status === "declined") {
+    label.textContent = "⚠️ 你已回報問題(視為回絕),店長會處理。";
+  } else {
+    label.textContent = "請確認你的班表" + (ctx.deadline ? `(建議於 ${new Date(ctx.deadline).toLocaleString()} 前)` : "") + ":";
+  }
+  bar.appendChild(label);
+
+  // 未鎖定、且尚未確認 → 給「接受整週」按鈕。
+  if (!ctx.locked && status !== "confirmed") {
+    const btn = document.createElement("button");
+    btn.textContent = "✅ 接受整週班表";
+    btn.style.marginLeft = "0.5rem";
+    btn.addEventListener("click", confirmWeek);
+    bar.appendChild(btn);
+  }
+}
+
+async function confirmWeek() {
+  try {
+    await api("POST", `/api/my-schedule/confirm?token=${encodeURIComponent(token)}&store_id=${currentStoreId}`);
+    ctx.my_status = "confirmed";
+    renderConfirmBar();
+    showStatus("已確認,感謝!");
   } catch (e) { showStatus(e.message, true); }
 }
 
@@ -125,7 +164,8 @@ function renderGrid() {
 }
 
 async function flagIssue(wd, hr) {
-  const note = prompt(`回報 ${WEEKDAYS[wd]} ${String(hr).padStart(2, "0")}:00 的問題(可留空):`);
+  if (ctx.locked) return showStatus("班表已定案,無法回報", true);
+  const note = prompt(`回報 ${WEEKDAYS[wd]} ${String(hr).padStart(2, "0")}:00 的問題(= 回絕這格,可留空理由):`);
   if (note === null) return; // 取消
   try {
     await api("POST", `/api/my-schedule/issues?token=${encodeURIComponent(token)}&store_id=${currentStoreId}`,
@@ -133,8 +173,10 @@ async function flagIssue(wd, hr) {
     // 本地標記,免重抓
     ctx.issues = (ctx.issues || []).filter((c) => !(c.weekday === wd && c.hour === hr));
     ctx.issues.push({ weekday: wd, hour: hr, note });
+    ctx.my_status = "declined"; // 回報 = 回絕
     renderGrid();
-    showStatus("已回報,店長會看到");
+    renderConfirmBar();
+    showStatus("已回報(視為回絕),店長會看到");
   } catch (e) { showStatus(e.message, true); }
 }
 

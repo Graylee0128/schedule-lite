@@ -1,10 +1,13 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
 	"strings"
+
+	"github.com/jackc/pgx/v5"
 
 	"schedule-lite/internal/platform/httpx"
 )
@@ -112,27 +115,37 @@ func (h *Handler) getSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 已發布版的員工問題標記(讓老闆看到回報)。
+	// 最近發布/鎖定版:給確認面板(員工確認狀態 + 問題標記)。
 	issues := []ScheduleIssue{}
+	confirmations := []Confirmation{}
+	var published *ScheduleVersion
 	if pub, ok, err := h.repo.LatestPublishedVersion(r.Context(), storeID); err != nil {
 		h.writeDBError(w, err, "查詢已發布版本")
 		return
 	} else if ok {
+		pubCopy := pub
+		published = &pubCopy
 		if issues, err = h.repo.ListIssues(r.Context(), pub.ID); err != nil {
 			h.writeDBError(w, err, "查詢問題標記")
+			return
+		}
+		if confirmations, err = h.repo.ListConfirmations(r.Context(), pub.ID); err != nil {
+			h.writeDBError(w, err, "查詢確認狀態")
 			return
 		}
 	}
 
 	httpx.JSON(w, http.StatusOK, ScheduleContext{
-		Version:      draft,
-		OpenHour:     hours.OpenHour,
-		CloseHour:    hours.CloseHour,
-		Employees:    employees,
-		Requirements: reqs,
-		Assignments:  assignments,
-		Validation:   validation,
-		Issues:       issues,
+		Version:       draft,
+		OpenHour:      hours.OpenHour,
+		CloseHour:     hours.CloseHour,
+		Employees:     employees,
+		Requirements:  reqs,
+		Assignments:   assignments,
+		Validation:    validation,
+		Published:     published,
+		Confirmations: confirmations,
+		Issues:        issues,
 	})
 }
 
@@ -312,10 +325,35 @@ func (h *Handler) publishSchedule(w http.ResponseWriter, r *http.Request) {
 		h.writeDBError(w, err, "發布班表")
 		return
 	}
+	// v3-B:對這版有班的員工 seed pending 確認(進入兩階段)。
+	if err := h.repo.SeedConfirmations(r.Context(), version.ID); err != nil {
+		h.writeDBError(w, err, "建立確認紀錄")
+		return
+	}
 	httpx.JSON(w, http.StatusOK, map[string]any{
 		"version":    version,
 		"validation": validation,
 	})
+}
+
+// lockSchedule v3-B:老闆把最近一版 published 設為 locked(定案)。
+// 採「軟截止 + 手動鎖」,不強制全員確認(店長說了算);前端會在未全確認時提醒。
+func (h *Handler) lockSchedule(w http.ResponseWriter, r *http.Request) {
+	storeID := strings.TrimSpace(r.URL.Query().Get("store_id"))
+	if storeID == "" {
+		httpx.Error(w, http.StatusBadRequest, "需要 store_id 查詢參數")
+		return
+	}
+	version, err := h.repo.LockVersion(r.Context(), storeID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			httpx.Error(w, http.StatusBadRequest, "沒有已發布的班表可鎖定")
+			return
+		}
+		h.writeDBError(w, err, "鎖定班表")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"version": version})
 }
 
 // exportSchedule 匯出 CSV:把每位員工每天的連續小時併成班段。
@@ -448,8 +486,15 @@ func (h *Handler) getMySchedule(w http.ResponseWriter, r *http.Request) {
 		h.writeDBError(w, err, "查詢已發布班表")
 		return
 	}
+	out.MyStatus = "pending"
 	if ok {
 		out.Published = true
+		out.Locked = pub.Status == "locked"
+		out.Deadline = pub.ConfirmDeadline
+		if out.MyStatus, err = h.repo.EmployeeConfirmationStatus(r.Context(), pub.ID, emp.ID); err != nil {
+			h.writeDBError(w, err, "查詢確認狀態")
+			return
+		}
 		if out.Assignments, err = h.repo.EmployeeCells(r.Context(), pub.ID, emp.ID); err != nil {
 			h.writeDBError(w, err, "查詢我的班表")
 			return
@@ -460,6 +505,43 @@ func (h *Handler) getMySchedule(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	httpx.JSON(w, http.StatusOK, out)
+}
+
+// confirmMySchedule v3-B:員工「接受整週班表」→ 把自己對最近發布版的確認設為 confirmed。
+func (h *Handler) confirmMySchedule(w http.ResponseWriter, r *http.Request) {
+	token := strings.TrimSpace(r.URL.Query().Get("token"))
+	storeID := strings.TrimSpace(r.URL.Query().Get("store_id"))
+	if token == "" {
+		httpx.Error(w, http.StatusUnauthorized, "缺少連結權杖")
+		return
+	}
+	if storeID == "" {
+		httpx.Error(w, http.StatusBadRequest, "需要 store_id 查詢參數")
+		return
+	}
+	emp, store, err := h.repo.ResolveTokenForStore(r.Context(), token, storeID)
+	if err != nil {
+		h.writeTokenError(w, err)
+		return
+	}
+	pub, ok, err := h.repo.LatestPublishedVersion(r.Context(), store.ID)
+	if err != nil {
+		h.writeDBError(w, err, "查詢已發布班表")
+		return
+	}
+	if !ok {
+		httpx.Error(w, http.StatusBadRequest, "這間店還沒有發布班表")
+		return
+	}
+	if pub.Status == "locked" {
+		httpx.Error(w, http.StatusBadRequest, "班表已鎖定,無法再變更確認")
+		return
+	}
+	if err := h.repo.SetConfirmation(r.Context(), pub.ID, emp.ID, "confirmed", ""); err != nil {
+		h.writeDBError(w, err, "確認班表")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) postMyIssue(w http.ResponseWriter, r *http.Request) {
@@ -500,13 +582,23 @@ func (h *Handler) postMyIssue(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "這間店還沒有發布班表")
 		return
 	}
-	marked, err := h.repo.MarkIssue(r.Context(), pub.ID, emp.ID, body.Weekday, body.Hour, strings.TrimSpace(body.Note))
+	if pub.Status == "locked" {
+		httpx.Error(w, http.StatusBadRequest, "班表已鎖定,無法再回報")
+		return
+	}
+	note := strings.TrimSpace(body.Note)
+	marked, err := h.repo.MarkIssue(r.Context(), pub.ID, emp.ID, body.Weekday, body.Hour, note)
 	if err != nil {
 		h.writeDBError(w, err, "標記問題")
 		return
 	}
 	if !marked {
 		httpx.Error(w, http.StatusBadRequest, "這格不是你的班,無法標記")
+		return
+	}
+	// v3-B:回報問題 = 回絕,把這位員工對此版的確認設為 declined。
+	if err := h.repo.SetConfirmation(r.Context(), pub.ID, emp.ID, "declined", note); err != nil {
+		h.writeDBError(w, err, "更新確認狀態")
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
