@@ -9,27 +9,31 @@
 <body>
   <header>
     <h1>填寫可上班時段</h1>
-    <p class="muted">在每個班別 × 星期的格子選擇你的意願,填完按「儲存」。不用註冊。</p>
+    <p class="muted">選好筆刷,在格子上「按住拖過」一段時間就塗好了。未塗 = 不能上。不用註冊。</p>
   </header>
 
   <div id="status" class="status" hidden></div>
   <p id="loading" class="muted">載入中…</p>
   <section class="card" id="fatal" hidden></section>
 
+  <!-- 選門市(一條連結可填多店) -->
+  <section class="card" id="pickerSection" hidden>
+    <p>嗨 <strong id="empNameTop"></strong>,選一間門市填寫你每週固定可上的時段:</p>
+    <div id="storePicker" class="row"></div>
+  </section>
+
   <section class="card" id="meSection" hidden>
-    <p>嗨 <strong id="empName"></strong>,這是 <strong id="storeName"></strong> 的班表,請填寫你每週固定可上的時段:</p>
-    <p class="muted pref-legend">點一下格子循環切換意願:
-      <span class="pref-empty">未填</span>
-      <span class="pref-2">非常想上</span>
-      <span class="pref-1">可配合</span>
-      <span class="pref-0">絕對不行</span>
-    </p>
+    <p>填寫 <strong id="storeName"></strong> 的可上時段(列=時段、欄=星期):</p>
+    <p class="muted">先選下面的筆刷,再到格子上按住拖曳。點星期表頭可一次塗整天、點時間列頭可塗該時段一整週。</p>
+    <div id="brushBar" class="row"></div>
     <div id="fillGrid"></div>
     <div class="row">
       <button id="save">儲存我的時段</button>
+      <button id="clearAll" class="ghost">清空全部</button>
     </div>
   </section>
 
+  <script src="/static/dragGrid.js"></script>
   <script src="/static/staff/availability.js"></script>
 </body>
 </html>

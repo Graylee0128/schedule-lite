@@ -11,7 +11,12 @@ const LS_ORG = "sl_org";
 const LS_STORE = "sl_store";
 let orgId = null;
 let storeId = null;
-let templates = [];
+let orgStores = []; // 目前組織的所有門市(給員工門市指派 checkbox 用)
+
+// v1.5 階段 B:目前門市的營業時段 + 需求網格(逐小時)。
+let openHour = 9, closeHour = 22;
+let reqGrid = null;  // 需求 PaintGrid
+let reqBrush = 1;    // 需求筆刷(要幾人;0=清除)
 
 // --- 共用工具 ---
 
@@ -37,8 +42,6 @@ async function api(method, path, body) {
   if (!res.ok) throw new Error((data && data.error) || ("HTTP " + res.status));
   return data;
 }
-
-const hhmm = (t) => (t || "").slice(0, 5); // "06:00:00" -> "06:00"
 
 // --- 1. 組織(可選既有 / 可新建)---
 
@@ -100,6 +103,7 @@ $("createOrg").addEventListener("click", async () => {
 
 async function loadStores() {
   const stores = await api("GET", `/api/stores?organization_id=${orgId}`);
+  orgStores = stores; // 留給員工門市指派用
   const sel = $("storeSelect");
   sel.innerHTML = '<option value="">-- 選擇門市 --</option>';
   stores.forEach((s) => {
@@ -130,9 +134,9 @@ function selectStore(id) {
   if (storeId) localStorage.setItem(LS_STORE, storeId);
   else localStorage.removeItem(LS_STORE);
   const show = !!storeId;
-  $("templateSection").hidden = !show;
+  $("settingsSection").hidden = !show;
   $("gridSection").hidden = !show;
-  if (show) loadTemplates();
+  if (show) loadStoreSettings();
 }
 
 // --- 3. 員工 ---
@@ -145,19 +149,26 @@ async function loadEmployees() {
     const li = document.createElement("li");
     const span = document.createElement("span");
     span.textContent = e.name + (e.phone ? ` (${e.phone})` : "") + "　";
-    const btn = document.createElement("button");
-    btn.textContent = "發填班連結";
-    btn.addEventListener("click", () => makeLink(e.id, e.name));
-    li.append(span, btn);
+    const linkBtn = document.createElement("button");
+    linkBtn.textContent = "發填班連結";
+    linkBtn.addEventListener("click", () => makeLink(e.id, e.name));
+    const memBtn = document.createElement("button");
+    memBtn.textContent = "門市";
+    memBtn.style.marginLeft = "0.3rem";
+    const panel = document.createElement("div");
+    panel.className = "muted";
+    panel.style.margin = "0.3rem 0 0.6rem";
+    panel.hidden = true;
+    memBtn.addEventListener("click", () => toggleMemberships(e.id, panel));
+    li.append(span, linkBtn, memBtn, panel);
     ul.appendChild(li);
   });
 }
 
-// makeLink 為某員工 + 目前選定門市產生 magic-link,顯示完整連結供複製。
+// makeLink 為某員工產生 magic-link(v1.5:綁員工、不綁門市,一人一條),顯示完整連結供複製。
 async function makeLink(empId, empName) {
-  if (!storeId) return showStatus("請先在上方「門市」選一間店(連結會綁定該店班別)", true);
   try {
-    const res = await api("POST", "/api/access-links", { employee_id: empId, store_id: storeId });
+    const res = await api("POST", "/api/access-links", { employee_id: empId });
     const full = location.origin + res.url;
     const out = $("linkUrl");
     out.value = full;
@@ -166,6 +177,35 @@ async function makeLink(empId, empName) {
     out.select();
     try { await navigator.clipboard.writeText(full); showStatus(`已複製 ${empName} 的填班連結`); }
     catch { showStatus(`已產生 ${empName} 的連結,請手動複製`); }
+  } catch (e) { showStatus(e.message, true); }
+}
+
+// toggleMemberships 展開/收合某員工的門市指派:勾選 = 屬於該店、可填該店班。
+async function toggleMemberships(empId, panel) {
+  if (!panel.hidden) { panel.hidden = true; return; }
+  try {
+    const member = await api("GET", `/api/memberships?employee_id=${empId}`);
+    const memberIds = new Set(member.map((s) => s.id));
+    panel.textContent = "可填門市:";
+    orgStores.forEach((s) => {
+      const label = document.createElement("label");
+      label.style.marginRight = "0.6rem";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = memberIds.has(s.id);
+      cb.addEventListener("change", () => setMembership(empId, s.id, cb.checked));
+      label.append(cb, document.createTextNode(" " + s.name));
+      panel.appendChild(label);
+    });
+    panel.hidden = false;
+  } catch (e) { showStatus(e.message, true); }
+}
+
+async function setMembership(empId, sid, on) {
+  try {
+    if (on) await api("POST", "/api/memberships", { employee_id: empId, store_id: sid });
+    else await api("DELETE", `/api/memberships?employee_id=${empId}&store_id=${sid}`);
+    showStatus("已更新門市歸屬");
   } catch (e) { showStatus(e.message, true); }
 }
 
@@ -182,45 +222,96 @@ $("createEmp").addEventListener("click", async () => {
   } catch (e) { showStatus(e.message, true); }
 });
 
-// --- 4. 班別模板 ---
+// --- 4. 營業時段 + 逐小時需求人數(v1.5 階段 B,取代固定 4 班別)---
 
-async function loadTemplates() {
-  templates = await api("GET", `/api/shift-templates?store_id=${storeId}`);
-  const tb = $("templateTable").querySelector("tbody");
-  tb.innerHTML = "";
-  templates.forEach((t) => {
-    const tr = document.createElement("tr");
-    tr.innerHTML =
-      `<td>${t.name}</td>` +
-      `<td>${hhmm(t.start_local)}</td>` +
-      `<td>${hhmm(t.end_local)}</td>` +
-      `<td><input type="number" min="0" value="${t.required_headcount}" data-id="${t.id}" style="width:4em"></td>` +
-      `<td><button data-save="${t.id}">儲存</button></td>`;
-    tb.appendChild(tr);
-  });
-  tb.querySelectorAll("button[data-save]").forEach((btn) =>
-    btn.addEventListener("click", () => saveTemplate(btn.getAttribute("data-save")))
-  );
-  await loadCoverage(); // 需求人數改了會影響缺口,重抓一次
-}
+const hoursRange = () => {
+  const out = [];
+  for (let hr = openHour; hr < closeHour; hr++) out.push(hr);
+  return out;
+};
 
-async function saveTemplate(id) {
-  const t = templates.find((x) => x.id === id);
-  const headcount = parseInt(document.querySelector(`input[data-id="${id}"]`).value, 10);
+// 載入門市設定:先取營業時段,再依時段畫需求網格,最後抓缺口。
+async function loadStoreSettings() {
   try {
-    await api("PUT", `/api/shift-templates/${id}`, {
-      name: t.name,
-      start_local: hhmm(t.start_local),
-      end_local: hhmm(t.end_local),
-      required_headcount: headcount,
-      required_skills: t.required_skills,
-    });
-    showStatus("已更新:" + t.name);
-    await loadTemplates();
+    const h = await api("GET", `/api/store-hours?store_id=${storeId}`);
+    openHour = h.open_hour;
+    closeHour = h.close_hour;
+    $("openHour").value = openHour;
+    $("closeHour").value = closeHour;
+    await loadRequirements();
+    await loadCoverage();
   } catch (e) { showStatus(e.message, true); }
 }
 
-// --- 5. 週缺口 heatmap(需求 vs 可上)---
+$("saveHours").addEventListener("click", async () => {
+  const o = parseInt($("openHour").value, 10);
+  const c = parseInt($("closeHour").value, 10);
+  if (!(o < c)) return showStatus("開店時間需早於關店時間", true);
+  try {
+    const h = await api("PUT", `/api/store-hours?store_id=${storeId}`, { open_hour: o, close_hour: c });
+    openHour = h.open_hour;
+    closeHour = h.close_hour;
+    showStatus(`營業時段已更新:${openHour}:00–${closeHour}:00`);
+    await loadRequirements();
+    await loadCoverage();
+  } catch (e) { showStatus(e.message, true); }
+});
+
+// 一格需求外觀:0 = 空白、>0 = 顯示人數並上色。
+function applyReqCell(td, n) {
+  td.dataset.val = String(n);
+  td.className = "paint " + (n > 0 ? "req-set" : "pref-empty");
+  td.textContent = n > 0 ? n : "";
+}
+
+function renderReqBrushBar() {
+  const bar = $("reqBrush");
+  bar.innerHTML = "";
+  [0, 1, 2, 3].forEach((n) => {
+    const btn = document.createElement("button");
+    btn.textContent = n === 0 ? "清除" : `${n} 人`;
+    btn.dataset.n = n;
+    btn.classList.toggle("active", n === reqBrush);
+    btn.addEventListener("click", () => {
+      reqBrush = n;
+      bar.querySelectorAll("button").forEach((x) =>
+        x.classList.toggle("active", parseInt(x.dataset.n, 10) === reqBrush));
+    });
+    bar.appendChild(btn);
+  });
+}
+
+async function loadRequirements() {
+  const reqs = await api("GET", `/api/requirements?store_id=${storeId}`);
+  const filled = {};
+  reqs.forEach((r) => { filled[`${r.weekday}_${r.hour}`] = r.headcount; });
+
+  renderReqBrushBar();
+  reqGrid = createPaintGrid({
+    container: $("reqGrid"),
+    hours: hoursRange(),
+    initCell: (td, wd, hr) => applyReqCell(td, filled[`${wd}_${hr}`] || 0),
+    onPaint: (td) => applyReqCell(td, reqBrush),
+    onColHeader: (wd) => hoursRange().forEach((hr) => applyReqCell(reqGrid.cellAt(wd, hr), reqBrush)),
+    onRowHeader: (hr) => { for (let wd = 0; wd < 7; wd++) applyReqCell(reqGrid.cellAt(wd, hr), reqBrush); },
+  });
+}
+
+$("saveReq").addEventListener("click", async () => {
+  const requirements = [];
+  for (const hr of hoursRange())
+    for (let wd = 0; wd < 7; wd++) {
+      const n = parseInt(reqGrid.cellAt(wd, hr).dataset.val, 10);
+      if (n > 0) requirements.push({ weekday: wd, hour: hr, headcount: n });
+    }
+  try {
+    const res = await api("PUT", `/api/requirements?store_id=${storeId}`, { requirements });
+    showStatus(`需求已儲存,共 ${res.saved} 個時段。`);
+    await loadCoverage();
+  } catch (e) { showStatus(e.message, true); }
+});
+
+// --- 5. 逐小時缺口 heatmap(需求 vs 可上)---
 
 async function loadCoverage() {
   try {
@@ -229,36 +320,43 @@ async function loadCoverage() {
   } catch (e) { showStatus(e.message, true); }
 }
 
-// 顏色:需求 0 或 可上≥需求 → 綠;有人但不夠 → 黃;0 人可上 → 紅。
+// 顏色:可上≥需求(含需求 0)→ 綠;有人但不夠 → 黃;需要人卻 0 人可上 → 紅。
 function coverageClass(c) {
-  if (c.required === 0 || c.available >= c.required) return "cov-ok";
+  if (c.available >= c.required) return "cov-ok";
   if (c.available === 0) return "cov-none";
   return "cov-short";
 }
 
 function renderCoverage(cov) {
-  const rows = [...cov.templates].sort((a, b) => a.start_local.localeCompare(b.start_local));
-  const idx = {};
-  cov.cells.forEach((c) => { idx[`${c.shift_template_id}_${c.weekday}`] = c; });
+  // 只畫後端回的格子(有需求或有人可上的時段),依小時列出。
+  const byHour = {}; // hr -> {wd -> cell}
+  cov.cells.forEach((c) => { (byHour[c.hour] = byHour[c.hour] || {})[c.weekday] = c; });
+  const hrs = Object.keys(byHour).map(Number).sort((a, b) => a - b);
 
-  let html = "<table class='grid cov'><thead><tr><th>班別</th>";
+  if (hrs.length === 0) {
+    $("grid").innerHTML = "<p class='muted'>這間店還沒設需求、也還沒有人填可上時段。先到上方設定營業時段與需求人數。</p>";
+    return;
+  }
+
+  let html = "<div class='grid'><table class='cov'><thead><tr><th>時段</th>";
   WEEKDAYS.forEach((d) => (html += `<th>${d}</th>`));
   html += "</tr></thead><tbody>";
-  rows.forEach((t) => {
-    html += `<tr><th>${t.name}<br><small>${hhmm(t.start_local)}-${hhmm(t.end_local)}</small></th>`;
+  hrs.forEach((hr) => {
+    const hh = String(hr).padStart(2, "0") + ":00";
+    html += `<tr><th>${hh}</th>`;
     for (let wd = 0; wd < 7; wd++) {
-      const c = idx[`${t.id}_${wd}`] || { required: t.required_headcount, available: 0, want: 0, ok: 0 };
+      const c = byHour[hr][wd];
+      if (!c) { html += "<td></td>"; continue; }
       html += `<td class='${coverageClass(c)}' title='非常想上 ${c.want}・可配合 ${c.ok}'>${c.available}/${c.required}</td>`;
     }
     html += "</tr>";
   });
-  html += "</tbody></table>";
+  html += "</tbody></table></div>";
 
-  // 未填名單(發了連結但一格都沒填)
   if (cov.not_filled && cov.not_filled.length) {
-    html += `<p class='muted'>⚠️ 尚未填寫(已發連結):${cov.not_filled.map((e) => e.name).join("、")}</p>`;
+    html += `<p class='muted'>⚠️ 尚未填寫(已是門市成員):${cov.not_filled.map((e) => e.name).join("、")}</p>`;
   } else {
-    html += `<p class='muted'>✓ 已發連結的員工都填了(或尚未發連結)。</p>`;
+    html += `<p class='muted'>✓ 這間店的成員都提交了(或尚未指派成員)。</p>`;
   }
   $("grid").innerHTML = html;
 }

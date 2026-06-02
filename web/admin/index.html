@@ -34,7 +34,7 @@
     <h2>2. 門市</h2>
     <div class="row">
       <input id="storeName" placeholder="門市名稱(例:板橋店)">
-      <button id="createStore">建立門市(自動帶 4 班別)</button>
+      <button id="createStore">建立門市</button>
     </div>
     <div class="row">
       <label for="storeSelect">選擇門市:</label>
@@ -51,37 +51,46 @@
       <button id="createEmp">建立員工</button>
     </div>
     <ul id="empList" class="list"></ul>
-    <p class="muted">提示:先在上方選好門市,再點員工的「發填班連結」,連結會綁定該店班別。</p>
+    <p class="muted">提示:「發填班連結」給員工一條連結(綁員工,可跨他的門市填班);「門市」可調整他能填哪些店(新員工預設全店)。</p>
     <div id="linkOut" class="row" hidden>
       <label for="linkUrl">填班連結(複製給員工):</label>
       <input id="linkUrl" readonly style="flex:1; min-width:18em">
     </div>
   </section>
 
-  <!-- 4. 班別模板 -->
-  <section class="card" id="templateSection" hidden>
-    <h2>4. 班別模板</h2>
-    <table id="templateTable">
-      <thead><tr><th>班別</th><th>起</th><th>迄</th><th>需求人數</th><th></th></tr></thead>
-      <tbody></tbody>
-    </table>
+  <!-- 4. 營業時段 + 逐小時需求人數 -->
+  <section class="card" id="settingsSection" hidden>
+    <h2>4. 營業時段 + 逐小時需求</h2>
+    <div class="row">
+      <label>營業時段:</label>
+      <input id="openHour" type="number" min="0" max="24" style="width:4em"> :00 –
+      <input id="closeHour" type="number" min="0" max="24" style="width:4em"> :00
+      <button id="saveHours">更新時段</button>
+    </div>
+    <p class="muted">下面的需求網格(列=時段、欄=星期):選「幾人」筆刷,在格子上按住拖曳設定該時段要幾人。點星期表頭可整天套用、點時間列頭可套用一整週。不需要人的時段選「清除」。</p>
+    <div id="reqBrush" class="row"></div>
+    <div id="reqGrid"></div>
+    <div class="row">
+      <button id="saveReq">儲存需求</button>
+    </div>
   </section>
 
-  <!-- 5. 週缺口 heatmap(需求 vs 可上) -->
+  <!-- 5. 逐小時缺口 heatmap(需求 vs 可上) -->
   <section class="card" id="gridSection" hidden>
     <div class="row" style="justify-content: space-between">
-      <h2 style="margin: 0">5. 週缺口(需求 vs 可上)</h2>
+      <h2 style="margin: 0">5. 缺口(需求 vs 可上)</h2>
       <button id="refreshCoverage">重新整理</button>
     </div>
     <p class="muted pref-legend">每格 = 可上/需求 ·
       <span class="cov-ok">足</span>
       <span class="cov-short">不足</span>
       <span class="cov-none">無人可上</span>
-      · 員工填班後按「重新整理」更新
+      · 只列出有需求或有人可上的時段;員工填班後按「重新整理」更新
     </p>
     <div id="grid"></div>
   </section>
 
+  <script src="/static/dragGrid.js"></script>
   <script src="/static/admin/app.js"></script>
 </body>
 </html>

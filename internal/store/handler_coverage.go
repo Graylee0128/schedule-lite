@@ -7,8 +7,11 @@ import (
 	"schedule-lite/internal/platform/httpx"
 )
 
-// getCoverage 回傳某店一週的缺口分析:每個 (班別 × 星期) 的 需求 vs 可上,
-// 加上「發了連結但還沒填」的員工名單。對應 design §3.9 的 7×4 heatmap。
+// getCoverage 回傳某店一週的逐小時缺口分析:每個 (weekday × hour) 的 需求 vs 可上,
+// 加上「發了連結但還沒提交」的員工名單。對應 design 決策 8.3 的「小時 × 星期」heatmap。
+//
+// 格子範圍 = 營業時段內的每個小時 × 7 天;只列出「有需求(headcount>0)或有人可上」的時段,
+// 全空的時段不回(前端只畫有意義的列),避免營業時段大時 heatmap 過長。
 func (h *Handler) getCoverage(w http.ResponseWriter, r *http.Request) {
 	storeID := strings.TrimSpace(r.URL.Query().Get("store_id"))
 	if storeID == "" {
@@ -16,14 +19,19 @@ func (h *Handler) getCoverage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	templates, err := h.repo.ListShiftTemplates(r.Context(), storeID)
+	hours, err := h.repo.GetStoreHours(r.Context(), storeID)
 	if err != nil {
-		h.writeDBError(w, err, "查詢班別")
+		h.writeDBError(w, err, "查詢營業時段")
 		return
 	}
 	counts, err := h.repo.AvailabilityCounts(r.Context(), storeID)
 	if err != nil {
 		h.writeDBError(w, err, "統計可上人數")
+		return
+	}
+	reqs, err := h.repo.GetRequirements(r.Context(), storeID)
+	if err != nil {
+		h.writeDBError(w, err, "查詢需求人數")
 		return
 	}
 	notFilled, err := h.repo.NotFilledEmployees(r.Context(), storeID)
@@ -32,37 +40,42 @@ func (h *Handler) getCoverage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 把統計結果索引成 map[班別_星期] 方便查;沒填的格子預設 0。
-	type key struct {
-		tid string
-		wd  int
-	}
-	byCell := make(map[key]AvailabilityCount, len(counts))
+	type key struct{ wd, hr int }
+	countBy := make(map[key]HourCount, len(counts))
 	for _, c := range counts {
-		byCell[key{c.ShiftTemplateID, c.Weekday}] = c
+		countBy[key{c.Weekday, c.Hour}] = c
+	}
+	reqBy := make(map[key]int, len(reqs))
+	for _, req := range reqs {
+		reqBy[key{req.Weekday, req.Hour}] = req.Headcount
 	}
 
-	// 對每個班別 × 7 天展開,算出 available / gap。
-	cells := make([]CoverageCell, 0, len(templates)*7)
-	for _, t := range templates {
+	// 對營業時段內的每個小時 × 7 天展開;只保留有需求或有人可上的格子。
+	cells := []CoverageCell{}
+	for hr := hours.OpenHour; hr < hours.CloseHour; hr++ {
 		for wd := 0; wd < 7; wd++ {
-			c := byCell[key{t.ID, wd}] // 不存在時為零值(want/ok/no=0)
+			c := countBy[key{wd, hr}] // 不存在時為零值
+			required := reqBy[key{wd, hr}]
 			available := c.Want + c.Ok
+			if required == 0 && available == 0 {
+				continue
+			}
 			cells = append(cells, CoverageCell{
-				ShiftTemplateID: t.ID,
-				Weekday:         wd,
-				Required:        t.RequiredHeadcount,
-				Want:            c.Want,
-				Ok:              c.Ok,
-				Available:       available,
-				Gap:             t.RequiredHeadcount - available,
+				Weekday:   wd,
+				Hour:      hr,
+				Required:  required,
+				Want:      c.Want,
+				Ok:        c.Ok,
+				Available: available,
+				Gap:       required - available,
 			})
 		}
 	}
 
 	httpx.JSON(w, http.StatusOK, Coverage{
 		StoreID:   storeID,
-		Templates: templates,
+		OpenHour:  hours.OpenHour,
+		CloseHour: hours.CloseHour,
 		Cells:     cells,
 		NotFilled: notFilled,
 	})

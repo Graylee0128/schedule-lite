@@ -32,13 +32,20 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/employees", h.createEmployee)
 	mux.HandleFunc("GET /api/employees", h.listEmployees)
 
-	mux.HandleFunc("GET /api/shift-templates", h.listShiftTemplates)
-	mux.HandleFunc("POST /api/shift-templates", h.createShiftTemplate)
-	mux.HandleFunc("PUT /api/shift-templates/{id}", h.updateShiftTemplate)
-	mux.HandleFunc("DELETE /api/shift-templates/{id}", h.deleteShiftTemplate)
+	// v1.5 階段 A:員工 ↔ 門市 membership(店長端調整員工門市歸屬)。
+	mux.HandleFunc("GET /api/memberships", h.listMemberships)
+	mux.HandleFunc("POST /api/memberships", h.addMembership)
+	mux.HandleFunc("DELETE /api/memberships", h.removeMembership)
 
-	// Step 5:員工填班(magic-link)。
+	// v1.5 階段 B:老闆設營業時段 + 逐小時需求人數(取代固定 4 班別模板)。
+	mux.HandleFunc("GET /api/store-hours", h.getStoreHours)
+	mux.HandleFunc("PUT /api/store-hours", h.putStoreHours)
+	mux.HandleFunc("GET /api/requirements", h.getRequirements)
+	mux.HandleFunc("PUT /api/requirements", h.putRequirements)
+
+	// Step 5 / v1.5:員工填班(magic-link,token 綁員工,多店)。
 	mux.HandleFunc("POST /api/access-links", h.createAccessLink)
+	mux.HandleFunc("GET /api/me", h.getMe)
 	mux.HandleFunc("GET /api/availability", h.getAvailability)
 	mux.HandleFunc("PUT /api/availability", h.putAvailability)
 
@@ -164,116 +171,56 @@ func (h *Handler) listEmployees(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, employees)
 }
 
-// --- 班別模板 ---
+// --- 員工 ↔ 門市 membership ---
 
-func (h *Handler) listShiftTemplates(w http.ResponseWriter, r *http.Request) {
-	storeID := strings.TrimSpace(r.URL.Query().Get("store_id"))
-	if storeID == "" {
-		httpx.Error(w, http.StatusBadRequest, "需要 store_id 查詢參數")
+func (h *Handler) listMemberships(w http.ResponseWriter, r *http.Request) {
+	empID := strings.TrimSpace(r.URL.Query().Get("employee_id"))
+	if empID == "" {
+		httpx.Error(w, http.StatusBadRequest, "需要 employee_id 查詢參數")
 		return
 	}
-	templates, err := h.repo.ListShiftTemplates(r.Context(), storeID)
+	stores, err := h.repo.ListMembershipStores(r.Context(), empID)
 	if err != nil {
-		h.writeDBError(w, err, "查詢班別模板")
+		h.writeDBError(w, err, "查詢門市歸屬")
 		return
 	}
-	if templates == nil {
-		templates = []ShiftTemplate{}
-	}
-	httpx.JSON(w, http.StatusOK, templates)
+	httpx.JSON(w, http.StatusOK, stores)
 }
 
-func (h *Handler) createShiftTemplate(w http.ResponseWriter, r *http.Request) {
-	req, ok := h.decodeShiftTemplate(w, r)
-	if !ok {
+func (h *Handler) addMembership(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		EmployeeID string `json:"employee_id"`
+		StoreID    string `json:"store_id"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "請求格式錯誤: "+err.Error())
 		return
 	}
-	if strings.TrimSpace(req.StoreID) == "" {
-		httpx.Error(w, http.StatusBadRequest, "store_id 必填")
+	req.EmployeeID = strings.TrimSpace(req.EmployeeID)
+	req.StoreID = strings.TrimSpace(req.StoreID)
+	if req.EmployeeID == "" || req.StoreID == "" {
+		httpx.Error(w, http.StatusBadRequest, "employee_id 與 store_id 皆必填")
 		return
 	}
-	t, err := h.repo.CreateShiftTemplate(r.Context(), req.StoreID, req.Name, req.StartLocal, req.EndLocal, req.Headcount, req.Skills)
-	if err != nil {
-		h.writeDBError(w, err, "建立班別模板")
-		return
-	}
-	httpx.JSON(w, http.StatusCreated, t)
-}
-
-func (h *Handler) updateShiftTemplate(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	req, ok := h.decodeShiftTemplate(w, r)
-	if !ok {
-		return
-	}
-	t, err := h.repo.UpdateShiftTemplate(r.Context(), id, req.Name, req.StartLocal, req.EndLocal, req.Headcount, req.Skills)
-	if err != nil {
-		h.writeDBError(w, err, "更新班別模板")
-		return
-	}
-	httpx.JSON(w, http.StatusOK, t)
-}
-
-func (h *Handler) deleteShiftTemplate(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	deleted, err := h.repo.DeleteShiftTemplate(r.Context(), id)
-	if err != nil {
-		h.writeDBError(w, err, "刪除班別模板")
-		return
-	}
-	if !deleted {
-		httpx.Error(w, http.StatusNotFound, "班別模板不存在")
+	if err := h.repo.AddMembership(r.Context(), req.EmployeeID, req.StoreID); err != nil {
+		h.writeDBError(w, err, "加入門市")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// shiftTemplateReq 是建立/更新班別模板的共用請求格式與驗證結果。
-type shiftTemplateReq struct {
-	StoreID    string
-	Name       string
-	StartLocal string
-	EndLocal   string
-	Headcount  int
-	Skills     []string
-}
-
-// decodeShiftTemplate 解析並驗證 body;失敗時已寫好回應、回傳 ok=false。
-func (h *Handler) decodeShiftTemplate(w http.ResponseWriter, r *http.Request) (shiftTemplateReq, bool) {
-	var body struct {
-		StoreID           string   `json:"store_id"`
-		Name              string   `json:"name"`
-		StartLocal        string   `json:"start_local"`
-		EndLocal          string   `json:"end_local"`
-		RequiredHeadcount *int     `json:"required_headcount"`
-		RequiredSkills    []string `json:"required_skills"`
+func (h *Handler) removeMembership(w http.ResponseWriter, r *http.Request) {
+	empID := strings.TrimSpace(r.URL.Query().Get("employee_id"))
+	storeID := strings.TrimSpace(r.URL.Query().Get("store_id"))
+	if empID == "" || storeID == "" {
+		httpx.Error(w, http.StatusBadRequest, "需要 employee_id 與 store_id 查詢參數")
+		return
 	}
-	if err := httpx.DecodeJSON(r, &body); err != nil {
-		httpx.Error(w, http.StatusBadRequest, "請求格式錯誤: "+err.Error())
-		return shiftTemplateReq{}, false
+	if err := h.repo.RemoveMembership(r.Context(), empID, storeID); err != nil {
+		h.writeDBError(w, err, "移出門市")
+		return
 	}
-
-	req := shiftTemplateReq{
-		StoreID:    strings.TrimSpace(body.StoreID),
-		Name:       strings.TrimSpace(body.Name),
-		StartLocal: strings.TrimSpace(body.StartLocal),
-		EndLocal:   strings.TrimSpace(body.EndLocal),
-		Headcount:  1, // 預設 1 人
-		Skills:     body.RequiredSkills,
-	}
-	if body.RequiredHeadcount != nil {
-		req.Headcount = *body.RequiredHeadcount
-	}
-
-	if req.Name == "" || req.StartLocal == "" || req.EndLocal == "" {
-		httpx.Error(w, http.StatusBadRequest, "name、start_local、end_local 皆必填")
-		return shiftTemplateReq{}, false
-	}
-	if req.Headcount < 0 {
-		httpx.Error(w, http.StatusBadRequest, "required_headcount 不可為負")
-		return shiftTemplateReq{}, false
-	}
-	return req, true
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // writeDBError 把常見的 Postgres 錯誤翻成對使用者友善的 4xx,其餘當 500。

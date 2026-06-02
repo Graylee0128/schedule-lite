@@ -1,99 +1,205 @@
 # schedule-lite
 
-針對小型店家 / 加盟店的 **availability-first 智慧排班輔助系統**。
+針對小型店家 / 加盟店 / 連鎖門市的 **availability-first 智慧排班輔助系統**。
 
-> 店長設定每天需要哪些班別、各需幾人 → 員工用**免註冊連結**填「每週可上的時段」→
-> 店長一頁看到**缺口 heatmap**:哪些班別缺人、誰還沒填。
+> 設計文件:[docs/think.md](./docs/think.md)(構想)、[docs/think-qa.md](./docs/think-qa.md)(答疑)、[docs/design.md](./docs/design.md)(架構/資料模型)、[docs/plan.md](./docs/plan.md)(v1~v3)、[docs/project-report.md](./docs/project-report.md)(逐檔深入說明,活文件)、[docs/dev-log.md](./docs/dev-log.md)(開發 log)、[docs/build-journal.md](./docs/build-journal.md)(復現手冊)。
+>
+> ⚠️ **抽成獨立 public repo 時**:`docs/dev-log.md`、`docs/build-journal.md`、`docs/think-qa.md`、`docs/discuss-log/` 為個人筆記,**不要帶過去**,並順手清掉本行對它們的連結。詳見 [docs/dev-log.md](./docs/dev-log.md) 末的「抽 public repo」備註。
 
-純 Go 後端(標準庫 `net/http` + PostgreSQL),前端是極簡 HTML/CSS/JS(前後端分離 / CSR),
-整包 `embed` 進**單一 distroless binary**,`docker compose` 一鍵起。
+## 開發進度
 
-> 📖 想了解**每個檔/模組在做什麼、實作邏輯怎麼運作**:見 [project-report.md](./project-report.md)(逐檔深入)。
+- [x] **Step 1 — Walking Skeleton**:空殼服務(`/healthz` `/readyz`)、結構化日誌、env 設定、優雅關閉、容器化。
+- [x] **Step 2 — v1 schema migration + DB**:goose migration(8 張基礎表)、pgx 連線池、`/readyz` 真的 ping DB。(已在 homelab 驗證)
+- [x] **Step 3 — 建店 / 建員工 CRUD**:第一個垂直切片(handler → repo → pgx → DB),JSON API。先手寫 pgx,sqlc 留下一步 refactor。(已在 homelab 驗證)
+- [x] **Step 4 — 班別模板 CRUD**:每店預設 4 班別(早/中/晚/大夜),List/Create/Update/Delete。(已在 homelab 驗證;**v1.5 階段 B 起改為逐小時需求,班別模板淘汰**)
+- [x] **前端 — 管理台(三件套,CSR)**:`web/` 靜態 HTML/CSS/JS,embed 進 binary 同源服務;組織/門市/員工 CRUD + 缺口 heatmap。(已在 homelab 驗證)
+- [x] **Step 5 — 員工填班(availability)+ magic-link**:店長發連結,員工免註冊點開填每週可上時段(三元偏好)。(已在 homelab 驗證)
+- [x] **Step 6 — 缺口分析 heatmap**:每班別 slot 顯示 需求 vs 可上人數、誰沒填;管理台可選既有組織(localStorage 還原);員工頁手機版面。(已在 homelab 驗證)
+- [x] **v1.5 階段 A — 多店一連結(membership)**:token 綁員工(一人一條)、建員工預設加入全店、員工開連結自選門市填班、`not_filled` 改依 membership + 提交標記。(已在 homelab 驗證)
+- [~] **v1.5 階段 B — 小時級 + when2meet 拖曳**:固定 4 班淘汰,改營業時段 + 逐小時需求/供給;員工/老闆共用拖曳塗選網格;缺口 heatmap 改「小時 × 星期」。(實作完成,⏳ 待驗證)
+- [ ] Step 3.5 — 用 sqlc 取代手寫查詢(型別安全)。
+- [ ] v1 收尾 — 店長登入 auth(目前 `/api/*` 無身分驗證)。
 
-## 功能
+> ⚠️ Step 2 第一次加了外部套件(pgx、goose),**先在有 Go 的機器上跑 `go mod tidy` 產生 `go.sum`**,之後才能 `docker build` / `docker compose up --build`。
 
-- 組織 / 門市 / 員工 / 班別模板 CRUD(建門市自動帶 早 / 中 / 晚 / 大夜 4 班別)
-- **員工填班**:magic-link(免註冊、免登入),手機友善的「點一下循環」四態色塊
-- **缺口分析 heatmap**:每個(班別 × 星期)顯示 需求 vs 可上人數、未填名單
-- 同源 JSON API、liveness / readiness 探針、結構化日誌、優雅關閉
+## 前置(一次性)
 
-## 技術
+本機需要:
 
-Go 1.22 · PostgreSQL 16 · pgx v5 · goose migrations · Docker(multi-stage、distroless static / nonroot)· docker compose
+- **Go 1.22+** — <https://go.dev/dl/>
+- **Docker Desktop**(含 compose)— <https://www.docker.com/products/docker-desktop/>
 
-> 目前限制(MVP):`/api/*`(店長端)尚無身分驗證;員工端靠 magic-link token 認證。
+驗證:`go version`、`docker version` 都有輸出即可。
 
----
+## 本機跑起來
 
-## 一鍵啟動(乾淨 Linux,只要 Docker)
-
-貼這行 —— 自動 **抓 repo → build → 起 app + postgres**,完成後開 <http://localhost:8080/>:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Graylee0128/schedule-lite/main/get.sh | bash
-```
-
-- 只依賴 **Docker + curl**;沒裝 Go 也行(腳本會用 `golang:1.22` 容器產 `go.sum`)。
-- **8080 被佔用會自動換 port**(往上找空的),腳本最後會印出實際網址,照著開即可。
-  - 想指定 port:`... | APP_PORT=9000 bash`。
-- **可安全重跑**:中途失敗(網路斷、port 衝突等)就再貼一次同一行,會自動清理重來,不會把事情搞砸。
-  - 安裝位置預設 `~/schedule-lite`,可用 `WORKDIR=...` 改;非本工具建立的同名資料夾不會被覆蓋(要覆蓋加 `FORCE=1`)。
-- 想先看腳本再跑(建議):
-  ```bash
-  curl -fsSL https://raw.githubusercontent.com/Graylee0128/schedule-lite/main/get.sh -o get.sh
-  less get.sh && bash get.sh
-  ```
-- 收掉:`cd ~/schedule-lite && docker compose down`(加 `-v` 連 DB 資料清)。
-
-> 已經 `git clone` 的話,也可以直接 `bash scripts/deploy.sh`(同樣會自動處理 `go.sum`)。
-
-## 開畫面測試一遍
-
-開 <http://localhost:8080/>(管理台),依序:
-
-1. **建組織**(或從下拉選既有)→ **建門市**(自動帶 4 班別)→ 選門市
-2. **建員工** → 點該員工「**發填班連結**」→ 複製出現的 `http://localhost:8080/a/<token>`
-3. **開新分頁貼上那條連結**(模擬員工,可用手機 / DevTools 手機模擬)→
-   點格子切換意願(🟩 非常想上 / 🟨 可配合 / 🟥 絕對不行)→ 按「**儲存我的時段**」
-4. 回管理台第 5 區按「**重新整理**」→ 看**缺口 heatmap**:剛填的格變綠、無人可上的紅、未填名單列在下方
-
-> ⚠️ 填班連結綁「**產生當下選的那間門市**」。要在大表看到缺口,請確認**管理台正在看的門市 = 連結所屬門市**。
-
-### (選用)直接看資料庫 — Adminer
+### 0. 第一次:產生 go.sum
 
 ```bash
-docker compose --profile tools up -d adminer   # 開 http://localhost:8081
-#   System = PostgreSQL   Server = db
-#   Username / Password / Database = schedule / schedule / schedule_lite
+go mod tidy   # 解析 pgx / goose 並產生 go.sum(只需做一次,之後改 deps 才要)
 ```
 
-> Adminer 用 compose profile 關著,預設不啟動。它是 DB 管理介面,只在本機 / 內網用,別曝露到公網。
+### 方式 A:腳本一鍵(推薦)
 
----
+```bash
+bash scripts/deploy.sh     # 自動 tidy(首次)+ build + 起 compose + 驗證探針
+bash scripts/teardown.sh   # 收掉(加 -v 連 DB 資料一起清)
+```
 
-## API 速覽
+### 方式 B:手動 compose(app + postgres)
 
-同源 JSON API,前端與 curl 共用。
+```bash
+docker compose up --build
+# 另開視窗:
+curl http://localhost:8080/healthz   # → {"status":"ok"}
+curl http://localhost:8080/readyz    # → {"status":"ready"}(DB 通才會 ready)
+```
+
+### 方式 C:host 上 go run(postgres 仍用 compose 起)
+
+```bash
+docker compose up -d db              # 只起 postgres
+go run ./cmd/server                  # app 連 localhost:5432
+```
+
+## Step 2 完成定義(DoD)
+
+- [ ] `go mod tidy` 產生 go.sum、`docker compose up --build` 起得來。
+- [ ] log 出現「套用資料庫 migration」「資料庫連線就緒」。
+- [ ] `/readyz` 回 `{"status":"ready"}`;把 db 停掉後 `/readyz` 變 503。
+- [ ] 進 postgres 看得到 8 張表(`\dt`)與 goose 紀錄表 `goose_db_version`。
+
+## 管理台(前端)
+
+部署後直接開瀏覽器(同源,前端 embed 在 binary 裡):
+
+```text
+http://localhost:8080/          # 或 http://<tailscale-ip>:8080/
+```
+
+依序操作:選/建組織 → 建門市 → 選門市 → 建員工 → 設**營業時段 + 逐小時需求人數**(拖曳塗選網格)→ 看**逐小時缺口 heatmap**(需求 vs 可上、未填名單)。
+選定的組織/門市會記在 localStorage,**重整頁面自動還原**(真資料仍回 DB)。全部透過 `fetch` 打下面的 JSON API。
+
+### 員工填班(magic-link,多店一連結 v1.5)
+
+1. 管理台員工列點「發填班連結」→ 取得 `http://<host>:8080/a/<token>`(**綁員工、不綁門市**,自動複製);需要時用「門市」鈕調整他能填哪些店(新員工預設全店)。
+2. 把連結傳給員工;員工**免註冊**點開 → **先選門市**(只列他被指派的店,單店自動進)→ 在「時段 × 星期」網格用 when2meet 式**拖曳塗選**意願(未塗=不能上),按儲存。
+3. token 只存 SHA-256 hash;一人一條長期連結,可跨其門市分別填班。重開會帶出先前填的(整批覆寫),並記「已提交」標記(缺口的「未填名單」據此判斷)。
+
+## API(Step 3)
+
+JSON CRUD,用 curl 走一遍垂直切片:建組織 → 建門市/員工 → 列出。
+
+```bash
+# 1. 建組織(回傳含 id)
+ORG=$(curl -sS -X POST localhost:8080/api/organizations \
+  -H 'Content-Type: application/json' -d '{"name":"胖老爹"}')
+echo "$ORG"
+ORG_ID=$(echo "$ORG" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+
+# 2. 在該組織建門市與員工
+curl -sS -X POST localhost:8080/api/stores \
+  -H 'Content-Type: application/json' \
+  -d "{\"organization_id\":\"$ORG_ID\",\"name\":\"板橋店\"}"
+curl -sS -X POST localhost:8080/api/employees \
+  -H 'Content-Type: application/json' \
+  -d "{\"organization_id\":\"$ORG_ID\",\"name\":\"小明\",\"phone\":\"0912345678\"}"
+
+# 3. 列出
+curl -sS "localhost:8080/api/stores?organization_id=$ORG_ID"
+curl -sS "localhost:8080/api/employees?organization_id=$ORG_ID"
+
+# 4. 驗證輸入驗證:壞的 organization_id 應回 400
+curl -sS -X POST localhost:8080/api/stores \
+  -H 'Content-Type: application/json' -d '{"organization_id":"not-a-uuid","name":"x"}'
+```
 
 | 路由 | 說明 |
 |---|---|
-| `GET /healthz` · `GET /readyz` | liveness / readiness 探針 |
-| `POST` · `GET /api/organizations` | 建立 / 列出組織 |
-| `POST /api/stores` · `GET /api/stores?organization_id=` | 建立 / 列出門市 |
-| `POST /api/employees` · `GET /api/employees?organization_id=` | 建立 / 列出員工 |
-| `GET/POST /api/shift-templates` · `PUT/DELETE /api/shift-templates/{id}` | 班別模板 CRUD |
-| `POST /api/access-links` | 產生員工填班 magic-link `{employee_id, store_id}` → `{token, url}` |
-| `GET/PUT /api/availability?token=` | 員工讀取 / 整批覆寫可上時段 |
-| `GET /api/coverage?store_id=` | 缺口分析(每格 需求 vs 可上、未填名單) |
+| `POST /api/organizations` | 建組織 `{name, timezone?}` |
+| `GET /api/organizations` | 列所有組織(管理台用來選既有) |
+| `POST /api/stores` | 建門市 `{organization_id, name}` |
+| `GET /api/stores?organization_id=` | 列門市 |
+| `POST /api/employees` | 建員工 `{organization_id, name, phone?}`(自動加入該組織所有門市) |
+| `GET /api/employees?organization_id=` | 列員工 |
+| `GET /api/memberships?employee_id=` | 列員工可填的門市 |
+| `POST /api/memberships` | 加入門市 `{employee_id, store_id}` |
+| `DELETE /api/memberships?employee_id=&store_id=` | 移出門市 |
+| `GET /api/store-hours?store_id=` | 取營業時段 → `{open_hour, close_hour}` |
+| `PUT /api/store-hours?store_id=` | 設營業時段 `{open_hour, close_hour}` |
+| `GET /api/requirements?store_id=` | 列逐小時需求 `[{weekday, hour, headcount}]`(只回 headcount>0) |
+| `PUT /api/requirements?store_id=` | 整批覆寫逐小時需求 `{requirements:[{weekday, hour, headcount}]}` |
+| `POST /api/access-links` | 產生員工填班 magic-link `{employee_id}` → `{token, url}`(v1.5:綁員工、不綁門市) |
+| `GET /api/me?token=` | 員工開連結的初始資料(員工 + 可填門市清單) |
+| `GET /api/availability?token=&store_id=` | 某門市的營業時段 + 員工已塗時段 `{open_hour, close_hour, slots:[{weekday, hour, preference_level}]}` |
+| `PUT /api/availability?token=&store_id=` | 整批覆寫該門市可上時段 `{slots:[{weekday, hour, preference_level}]}`(只存正向 1/2、並記提交標記) |
+| `GET /api/coverage?store_id=` | 逐小時缺口分析(每格 需求 vs 可上、未填名單依 membership + 提交標記) |
 
-範例:
+> 註:`/api/*`(店長端)尚無身分驗證(任何人可呼叫)——auth 留後續步驟。
+> 員工端 `/api/me` `/api/availability` 靠 magic-link 的 **token** 認證(token 只存 SHA-256 hash);token **綁員工**,可跨其 membership 的多店填班。
+
+### 營業時段 + 逐小時需求(v1.5 階段 B)
+
+固定 4 班別模板已淘汰,改為「**老闆設營業時段 + 逐小時需求人數**」。建門市時用 DB 預設時段(09–22),之後在管理台調整。
 
 ```bash
-BASE=http://localhost:8080
-ORG=$(curl -sS -X POST $BASE/api/organizations -H 'Content-Type: application/json' -d '{"name":"胖老爹"}')
-ORG_ID=$(echo "$ORG" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
-curl -sS -X POST $BASE/api/stores -H 'Content-Type: application/json' \
-  -d "{\"organization_id\":\"$ORG_ID\",\"name\":\"板橋店\"}"
+# 用上面的 $ORG_ID 建門市,拿 store_id
+STORE=$(curl -sS -X POST localhost:8080/api/stores \
+  -H 'Content-Type: application/json' \
+  -d "{\"organization_id\":\"$ORG_ID\",\"name\":\"板橋店\"}")
+STORE_ID=$(echo "$STORE" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+
+# 看/改營業時段
+curl -sS "localhost:8080/api/store-hours?store_id=$STORE_ID"            # → {"open_hour":9,"close_hour":22}
+curl -sS -X PUT "localhost:8080/api/store-hours?store_id=$STORE_ID" \
+  -H 'Content-Type: application/json' -d '{"open_hour":8,"close_hour":24}'
+
+# 設逐小時需求(週一 12 點要 2 人),整批覆寫
+curl -sS -X PUT "localhost:8080/api/requirements?store_id=$STORE_ID" \
+  -H 'Content-Type: application/json' \
+  -d '{"requirements":[{"weekday":1,"hour":12,"headcount":2}]}'
+curl -sS "localhost:8080/api/requirements?store_id=$STORE_ID"
+
+# 壞時段(開店晚於關店)→ 400
+curl -sS -X PUT "localhost:8080/api/store-hours?store_id=$STORE_ID" \
+  -H 'Content-Type: application/json' -d '{"open_hour":22,"close_hour":8}'
+```
+
+## 查資料庫(Adminer / DBeaver)
+
+PostgreSQL 沒有 phpMyAdmin(那是 MySQL 的)。這裡提供兩種等價方案:
+
+### 方案 1:Adminer(內建在 compose,web GUI,推薦)
+
+用 `tools` profile 關著——預設不啟動、不進 prod;要查資料時才開:
+
+```bash
+docker compose --profile tools up -d adminer   # 起 Adminer
+# 瀏覽器開 http://<host>:8081
+#   System   = PostgreSQL
+#   Server   = db          (已預帶)
+#   Username = schedule
+#   Password = schedule
+#   Database = schedule_lite
+docker compose stop adminer                     # 查完關掉
+```
+
+> ⚠️ Adminer 是 DB 管理介面,**只開在 homelab/內網**,別曝露到公網或 prod。
+
+### 方案 2:DBeaver(桌面,連已開放的 5432)
+
+compose 已 `ports: 5432:5432`,桌面 DBeaver 直接連:
+
+```text
+Host: <homelab-ip 或 tailscale-ip>   Port: 5432
+DB: schedule_lite   User: schedule   Password: schedule
+```
+
+### 方案 3:psql(免裝,最快)
+
+```bash
+docker compose exec db psql -U schedule -d schedule_lite -c '\dt'   # 列表
+docker compose exec db psql -U schedule -d schedule_lite            # 互動式
 ```
 
 ## 設定(環境變數)
@@ -108,25 +214,25 @@ curl -sS -X POST $BASE/api/stores -H 'Content-Type: application/json' \
 ## 目錄結構
 
 ```text
-get.sh                      一鍵安裝腳本(curl | bash 用)
 cmd/server/                 進入點(main + 連線 + migration + 路由 + 優雅關閉)
 internal/
   platform/
     config/                 env 設定載入
     httpx/                  探針 + JSON 輔助
     pg/                     pgx 連線池 + goose migration 執行
-  store/                    組織/門市/員工/班別/填班/缺口 domain
+  store/                    組織/門市/員工/營業時段/需求/填班 domain(models + repo + handler)
+                            repo_availability.go / handler_availability.go = Step 5 magic-link 填班
 db/
   embed.go                  把 migration 檔 embed 進 binary
   migrations/               SQL migration(goose 格式)
-web/                        前端(CSR,依使用者分子目錄)
-  admin/                    管理台(店長),入口 /
-  staff/                    員工填班頁,入口 /a/{token}
-  style.css                 共用樣式(資源由 /static/ 服務)
+web/                        前端(CSR,依使用者分兩個子目錄)
+  admin/                    管理台(店長):index.html / app.js,入口 /
+  staff/                    員工填班頁:availability.html / availability.js,入口 /a/{token}
+  style.css                 兩頁共用樣式(資源統一由 /static/ 服務)
   embed.go                  把前端 embed 進 binary,同源服務
 scripts/
   deploy.sh                 build + 起 compose + 驗證探針
   teardown.sh               收掉 compose(-v 連資料清)
 Dockerfile                  多階段 distroless
-docker-compose.yml          app + postgres(+ 選用 adminer)
+docker-compose.yml          app + postgres
 ```

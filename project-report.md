@@ -40,6 +40,10 @@ Go binary (net/http ServeMux)
 | 前端 | 純 HTML/CSS/JS(CSR) | 前後端分離、免框架;同源 embed 免 CORS |
 | 封裝 | Docker 多階段 + distroless | 單一靜態 binary、非 root、攻擊面小 |
 
+> **v1.5 階段 A 變更摘要(2026-06-02,✅ 已驗證)**:token 改綁**員工**(一人一條、可填多店);啟用 `employee_store_memberships`(建員工預設加入全組織門市);新增 `/api/me`(列可填門市)、`/api/memberships`(店長調歸屬)、`availability_submissions`(提交標記);`/api/availability` 改需 `store_id`;缺口的「未填名單」改依 membership + 提交標記。下方逐檔說明中「員工填班 / token / 缺口」相關處以此摘要為準,驗證通過後再完整併入各節。
+>
+> **v1.5 階段 B 變更摘要(2026-06-02,⏳ 待驗證)**:availability 與需求**改逐小時**,固定 4 班別模板淘汰。新增 `stores.open_hour/close_hour`(營業時段)、`staffing_requirements`(逐小時需求人數);`availability_slots` 重建為 `(員工,店,weekday,hour,preference 1/2)`**只存正向**(未塗=絕對不行不落 DB);`DROP TABLE shift_templates`。API:移除 `/api/shift-templates*`,新增 `/api/store-hours`、`/api/requirements`;`/api/availability` 與 `/api/coverage` 改逐小時形狀(coverage = 「小時 × 星期」)。前端新增 `web/dragGrid.js`(when2meet 式拖曳塗選,員工填班與老闆設需求共用),員工/管理台頁面隨之重寫。下方逐檔說明中凡提到「班別模板 / 7×4 / 三元偏好」者,以本摘要為準。
+
 ---
 
 ## 1. `cmd/server/` — 進入點

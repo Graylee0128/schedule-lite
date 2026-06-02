@@ -1,28 +1,24 @@
-// 員工填班頁邏輯。token 從網址 /a/{token} 取出,再用它打 /api/availability。
+// 員工填班頁(v1.5 階段 B:逐小時 + when2meet 拖曳塗選)。
+// token 從網址 /a/{token} 取出,先打 /api/me 拿可填門市,選店後打 /api/availability。
 "use strict";
 
 const $ = (id) => document.getElementById(id);
-const WEEKDAYS = ["週日", "週一", "週二", "週三", "週四", "週五", "週六"];
 
-// 四種狀態,點一下循環切換(手機友善,免下拉)。順序:白→綠→黃→紅→白。
-// level 為空字串代表「未填」(不送出);其餘對應 preference_level 2/1/0。
-const STATES = [
-  { level: "",  label: "未填",     cls: "pref-empty" },
-  { level: "2", label: "非常想上", cls: "pref-2" }, // 綠
-  { level: "1", label: "可配合",   cls: "pref-1" }, // 黃
-  { level: "0", label: "絕對不行", cls: "pref-0" }, // 紅
+// 筆刷:塗格子時套用的意願。預設「可配合」。清除 = 改回絕對不行(不落 DB)。
+// level 對應 preference_level:2=非常想上 / 1=可配合 / 0=清除(不送出)。
+const BRUSHES = [
+  { level: 2, label: "非常想上", cls: "pref-2" },
+  { level: 1, label: "可配合",   cls: "pref-1" },
+  { level: 0, label: "清除",     cls: "pref-empty" },
 ];
+let brush = 1; // 預設筆刷:可配合
 
-// 由現有 level 找到它在 STATES 的索引(找不到當未填)。
-const stateIndexByLevel = (lvl) => {
-  const i = STATES.findIndex((s) => s.level === lvl);
-  return i < 0 ? 0 : i;
-};
-
-// 從 /a/{token} 路徑取出 token。
 const token = decodeURIComponent(location.pathname.split("/a/")[1] || "");
 
-let templates = [];
+let stores = [];        // 我能填的門市(membership)
+let currentStoreId = null;
+let openHour = 9, closeHour = 22;
+let grid = null;        // 目前的 PaintGrid
 
 function showStatus(msg, isError) {
   const el = $("status");
@@ -46,77 +42,74 @@ async function api(method, path, body) {
   return data;
 }
 
-const hhmm = (t) => (t || "").slice(0, 5);
-const cellId = (templateId, weekday) => `c_${templateId}_${weekday}`;
-
-// 建一個可點擊的色塊格子;點一下就循環到下一個狀態。
-// 目前狀態存在 button.dataset.level(""/"2"/"1"/"0"),送出時讀它。
-function prefCell(templateId, weekday, level) {
-  const cell = document.createElement("button");
-  cell.type = "button";
-  cell.id = cellId(templateId, weekday);
-  let idx = stateIndexByLevel(level);
-
-  const apply = () => {
-    const s = STATES[idx];
-    cell.dataset.level = s.level;
-    cell.textContent = s.label;
-    cell.className = "pref " + s.cls;
-  };
-  apply();
-
-  cell.addEventListener("click", () => {
-    idx = (idx + 1) % STATES.length; // 循環:白→綠→黃→紅→白
-    apply();
-  });
-  return cell;
+// --- 一格的外觀:依 dataset.val(0/1/2)上色與標字 ---
+function applyCell(td, level) {
+  const b = BRUSHES.find((x) => x.level === level) || BRUSHES[2];
+  td.dataset.val = String(level);
+  td.className = "paint " + (level === 0 ? "pref-empty" : b.cls);
 }
 
-// 把後端回來的 slots 轉成 { "templateId_weekday": "level字串" } 方便查。
-function indexSlots(slots) {
-  const m = {};
-  slots.forEach((s) => { m[`${s.shift_template_id}_${s.weekday}`] = String(s.preference_level); });
-  return m;
+// 用目前筆刷塗一格(清除 = 0)。
+function paintCell(td) {
+  applyCell(td, brush);
 }
 
-// 手機友善:把「天」做成列、班別做成欄(最多 4 欄,塞得進手機寬度),
-// 由上往下捲就能填完一週,不必橫向捲動 7 欄。
-function renderGrid(slotMap) {
-  const cols = [...templates].sort((a, b) => a.start_local.localeCompare(b.start_local));
-  const table = document.createElement("table");
-  table.className = "grid";
-
-  const thead = document.createElement("thead");
-  const htr = document.createElement("tr");
-  htr.innerHTML = "<th>星期</th>" +
-    cols.map((t) => `<th>${t.name}<br><small>${hhmm(t.start_local)}-${hhmm(t.end_local)}</small></th>`).join("");
-  thead.appendChild(htr);
-  table.appendChild(thead);
-
-  const tbody = document.createElement("tbody");
-  for (let wd = 0; wd < 7; wd++) {
-    const tr = document.createElement("tr");
-    const th = document.createElement("th");
-    th.textContent = WEEKDAYS[wd];
-    tr.appendChild(th);
-    cols.forEach((t) => {
-      const td = document.createElement("td");
-      const selected = slotMap[`${t.id}_${wd}`] || "";
-      td.appendChild(prefCell(t.id, wd, selected));
-      tr.appendChild(td);
+// --- 筆刷選擇器 ---
+function renderBrushBar() {
+  const bar = $("brushBar");
+  bar.innerHTML = "";
+  BRUSHES.forEach((b) => {
+    const btn = document.createElement("button");
+    btn.textContent = b.label;
+    btn.className = "brush " + b.cls;
+    btn.dataset.level = b.level;
+    btn.classList.toggle("active", b.level === brush);
+    btn.addEventListener("click", () => {
+      brush = b.level;
+      bar.querySelectorAll("button").forEach((x) =>
+        x.classList.toggle("active", parseInt(x.dataset.level, 10) === brush));
     });
-    tbody.appendChild(tr);
-  }
-  table.appendChild(tbody);
-
-  $("fillGrid").innerHTML = "";
-  $("fillGrid").appendChild(table);
+    bar.appendChild(btn);
+  });
 }
 
-// showFatal 顯示「無法繼續」的常駐錯誤(不像 toast 會消失),並收起表單與載入字樣。
+// --- 渲染填班網格(rows=營業小時、cols=7 天)---
+function renderGrid(slots) {
+  // 把已塗時段索引成 map["wd_hr"] = level
+  const filled = {};
+  slots.forEach((s) => { filled[`${s.weekday}_${s.hour}`] = s.preference_level; });
+
+  const hours = [];
+  for (let hr = openHour; hr < closeHour; hr++) hours.push(hr);
+
+  grid = createPaintGrid({
+    container: $("fillGrid"),
+    hours,
+    initCell: (td, wd, hr) => applyCell(td, filled[`${wd}_${hr}`] || 0),
+    onPaint: (td) => paintCell(td),
+    // 點某天表頭 = 整天套用目前筆刷;點某小時列頭 = 該小時 7 天都套用。
+    onColHeader: (wd) => hours.forEach((hr) => paintCell(grid.cellAt(wd, hr))),
+    onRowHeader: (hr) => { for (let wd = 0; wd < 7; wd++) paintCell(grid.cellAt(wd, hr)); },
+  });
+}
+
+// 蒐集所有塗了正向(1/2)的格子,整批送出(後端整批覆寫,未塗 = 絕對不行)。
+function collectSlots() {
+  const slots = [];
+  for (let hr = openHour; hr < closeHour; hr++) {
+    for (let wd = 0; wd < 7; wd++) {
+      const td = grid.cellAt(wd, hr);
+      const lvl = parseInt(td.dataset.val, 10);
+      if (lvl === 1 || lvl === 2) slots.push({ weekday: wd, hour: hr, preference_level: lvl });
+    }
+  }
+  return slots;
+}
+
 function showFatal(msg) {
   $("loading").hidden = true;
   $("meSection").hidden = true;
+  $("pickerSection").hidden = true;
   const f = $("fatal");
   f.className = "status error";
   f.textContent = msg;
@@ -126,37 +119,63 @@ function showFatal(msg) {
 async function load() {
   if (!token) return showFatal("連結不完整,請向店長索取新的填班連結。");
   try {
-    const ctx = await api("GET", `/api/availability?token=${encodeURIComponent(token)}`);
-    $("empName").textContent = ctx.employee.name;
-    $("storeName").textContent = ctx.store.name;
-    templates = ctx.templates || [];
-    renderGrid(indexSlots(ctx.slots || []));
+    const me = await api("GET", `/api/me?token=${encodeURIComponent(token)}`);
+    $("empNameTop").textContent = me.employee.name;
+    stores = me.stores || [];
     $("loading").hidden = true;
-    $("meSection").hidden = false;
+    if (stores.length === 0) {
+      showFatal("你還沒被指派任何門市,請聯絡店長。");
+      return;
+    }
+    renderStorePicker();
+    $("pickerSection").hidden = false;
+    if (stores.length === 1) selectStore(stores[0].id); // 只有一間就直接進
   } catch (e) {
     showFatal(e.message + "(連結可能已失效,請向店長索取新連結)");
   }
 }
 
-// 蒐集所有非「未填」的格子,整批送出(後端整批覆寫)。
-function collectSlots() {
-  const slots = [];
-  templates.forEach((t) => {
-    for (let wd = 0; wd < 7; wd++) {
-      const lvl = $(cellId(t.id, wd)).dataset.level;
-      if (lvl !== "") {
-        slots.push({ shift_template_id: t.id, weekday: wd, preference_level: parseInt(lvl, 10) });
-      }
-    }
+function renderStorePicker() {
+  const box = $("storePicker");
+  box.innerHTML = "";
+  stores.forEach((s) => {
+    const btn = document.createElement("button");
+    btn.textContent = s.name;
+    btn.dataset.store = s.id;
+    btn.addEventListener("click", () => selectStore(s.id));
+    box.appendChild(btn);
   });
-  return slots;
 }
 
+async function selectStore(storeId) {
+  currentStoreId = storeId;
+  $("storePicker").querySelectorAll("button").forEach((b) =>
+    b.classList.toggle("active", b.dataset.store === storeId));
+  try {
+    const ctx = await api("GET", `/api/availability?token=${encodeURIComponent(token)}&store_id=${storeId}`);
+    $("storeName").textContent = ctx.store.name;
+    openHour = ctx.open_hour;
+    closeHour = ctx.close_hour;
+    renderBrushBar();
+    renderGrid(ctx.slots || []);
+    $("meSection").hidden = false;
+  } catch (e) {
+    showStatus(e.message, true);
+  }
+}
+
+$("clearAll").addEventListener("click", () => {
+  if (!grid) return;
+  for (let hr = openHour; hr < closeHour; hr++)
+    for (let wd = 0; wd < 7; wd++) applyCell(grid.cellAt(wd, hr), 0);
+});
+
 $("save").addEventListener("click", async () => {
+  if (!currentStoreId) return showStatus("請先選一間門市", true);
   try {
     const slots = collectSlots();
-    const res = await api("PUT", `/api/availability?token=${encodeURIComponent(token)}`, { slots });
-    showStatus(`已儲存,共 ${res.saved} 格時段。感謝填寫!`);
+    const res = await api("PUT", `/api/availability?token=${encodeURIComponent(token)}&store_id=${currentStoreId}`, { slots });
+    showStatus(`已儲存「${$("storeName").textContent}」,共 ${res.saved} 個時段。感謝填寫!`);
   } catch (e) {
     showStatus(e.message, true);
   }
