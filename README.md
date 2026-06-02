@@ -8,6 +8,8 @@
 純 Go 後端(標準庫 `net/http` + PostgreSQL),前端是極簡 HTML/CSS/JS(前後端分離 / CSR),
 整包 `embed` 進**單一 distroless binary**,`docker compose` 一鍵起。
 
+> 📖 想了解**每個檔/模組在做什麼、實作邏輯怎麼運作**:見 [project-report.md](./project-report.md)(逐檔深入)。
+
 ## 功能
 
 - 組織 / 門市 / 員工 / 班別模板 CRUD(建門市自動帶 早 / 中 / 晚 / 大夜 4 班別)
