@@ -2,31 +2,22 @@
 
 針對小型店家 / 加盟店 / 連鎖門市的 **availability-first 智慧排班輔助系統**。
 
-> 設計文件:[docs/think.md](./docs/think.md)(構想)、[docs/think-qa.md](./docs/think-qa.md)(答疑)、[docs/design.md](./docs/design.md)(架構/資料模型)、[docs/plan.md](./docs/plan.md)(v1~v3)、[docs/project-report.md](./docs/project-report.md)(逐檔深入說明,活文件)、[docs/dev-log.md](./docs/dev-log.md)(開發 log)、[docs/build-journal.md](./docs/build-journal.md)(復現手冊)。
->
-> ⚠️ **抽成獨立 public repo 時**:`docs/dev-log.md`、`docs/build-journal.md`、`docs/think-qa.md`、`docs/discuss-log/` 為個人筆記,**不要帶過去**,並順手清掉本行對它們的連結。詳見 [docs/dev-log.md](./docs/dev-log.md) 末的「抽 public repo」備註。
+> 設計與開發文件(構想、架構、資料模型、開發紀錄)維護在內部 `docs/`,未隨此 repo 發佈。
 
-## 開發進度
+## 功能
 
-- [x] **Step 1 — Walking Skeleton**:空殼服務(`/healthz` `/readyz`)、結構化日誌、env 設定、優雅關閉、容器化。
-- [x] **Step 2 — v1 schema migration + DB**:goose migration(8 張基礎表)、pgx 連線池、`/readyz` 真的 ping DB。(已在 homelab 驗證)
-- [x] **Step 3 — 建店 / 建員工 CRUD**:第一個垂直切片(handler → repo → pgx → DB),JSON API。先手寫 pgx,sqlc 留下一步 refactor。(已在 homelab 驗證)
-- [x] **Step 4 — 班別模板 CRUD**:每店預設 4 班別(早/中/晚/大夜),List/Create/Update/Delete。(已在 homelab 驗證;**v1.5 階段 B 起改為逐小時需求,班別模板淘汰**)
-- [x] **前端 — 管理台(三件套,CSR)**:`web/` 靜態 HTML/CSS/JS,embed 進 binary 同源服務;組織/門市/員工 CRUD + 缺口 heatmap。(已在 homelab 驗證)
-- [x] **Step 5 — 員工填班(availability)+ magic-link**:店長發連結,員工免註冊點開填每週可上時段(三元偏好)。(已在 homelab 驗證)
-- [x] **Step 6 — 缺口分析 heatmap**:每班別 slot 顯示 需求 vs 可上人數、誰沒填;管理台可選既有組織(localStorage 還原);員工頁手機版面。(已在 homelab 驗證)
-- [x] **v1.5 階段 A — 多店一連結(membership)**:token 綁員工(一人一條)、建員工預設加入全店、員工開連結自選門市填班、`not_filled` 改依 membership + 提交標記。(已在 homelab 驗證)
-- [x] **v1.5 階段 B — 小時級 + when2meet 拖曳**:固定 4 班淘汰,改營業時段 + 逐小時需求/供給;員工/老闆共用拖曳塗選網格;缺口 heatmap 改「小時 × 星期」。(✅ homelab curl + 桌面 UI 驗證;手機觸控待實機)
-- [x] **v2 — 排班 + 衝突檢查 + 發布**:逐小時指派(循環週 + 版本快照)、Rule Engine 4 檢查(不可用/跨店雙排=硬;缺口/超週工時=黃)、發布(硬衝突擋)、CSV 匯出、員工看班表 + 回報問題。(✅ homelab curl + go test + 桌面 UI 驗證)
-- [x] **v3 階段 A — 一鍵建議班表(預排推薦)**:按一鍵用「瓶頸優先貪婪 + 計分」產出建議草稿(只排員工標可上的格 → 零硬衝突),老闆微調後發布。(✅ homelab 驗證:`suggested>0`、`publishable:true`、發布 200)
-- [x] **v3 階段 B — 完整兩階段提交**:發布 → 員工「接受整週 / 回報(=回絕)」→ 老闆看確認狀態 + 24h 倒數 → 手動「🔒 鎖定」定案(`draft→published→locked`)。(✅ homelab 驗證:publish 200 → confirm 204 → lock 200 → 鎖後 confirm 擋 400)
-- [ ] **下一步 — 衝突可視化報告**:把硬/軟衝突從「一行文字」改成可讀表格(誰 / 何時 / 哪種 / 撞到哪家店 / 建議動作)。資料 Rule Engine 已算出,主要補「跨店撞到哪家店」+ 前端表格 + 建議名單。
-- [ ] Step 3.5 — 用 sqlc 取代手寫查詢(型別安全)。
-- [ ] v1 收尾 — 店長登入 auth(目前 `/api/*` 無身分驗證;**上 prod 前補**)。
-- [ ] 之後 — 填班水位線、24h 自動鎖、強制指派覆寫(待拍板)、k8s + Argo CD 部署軌(**上 prod 前**)。
-- [ ] 連鎖店/未來階段 — 跨店權重全域排班(員工多店皆可上時依權重自動分配;癥結交協作者 fork 實驗)、跨日/過夜班(營業跨午夜)。
+- **組織 / 門市 / 員工管理**:多租戶結構;員工 ↔ 門市多對多歸屬,一員工一條連結、可跨店填班。
+- **逐小時營業時段 + 需求人數**:老闆設每店營業時段,並用塗選網格設「哪個小時要幾人」。
+- **when2meet 拖曳填班**:員工免註冊點開連結,拖曳塗選每週逐小時可上時段(兩級偏好,未塗=不能上);填班與設需求共用同一塗選網格。
+- **缺口分析 heatmap**:小時 × 星期一頁看「需求 vs 可上人數、誰還沒填」。
+- **一鍵建議排班**:用「瓶頸優先貪婪 + 計分」把可上時段排成建議草稿——只排員工標可上的格,保證零硬衝突,排不滿留缺口,老闆再微調。
+- **衝突檢查(Rule Engine)**:不可用時段、跨店同時段雙排為硬衝突(擋發布);人數未滿、超週工時為軟警告。
+- **兩階段提交**:發布 → 員工「接受整週 / 回報問題(=回絕)」→ 老闆看確認狀態 + 倒數 → 手動鎖定定案(`draft → published → locked`)。
+- **CSV 匯出**:連續小時自動併成班段(員工 / 星期 / 起迄 / 時數),Excel 可開。
 
-> ⚠️ Step 2 第一次加了外部套件(pgx、goose),**先在有 Go 的機器上跑 `go mod tidy` 產生 `go.sum`**,之後才能 `docker build` / `docker compose up --build`。
+技術面:單一 Go binary(標準庫 `net/http` + 同源 embed 前端)後接 PostgreSQL,`docker compose` 一鍵起;schema migration 隨 binary 自帶;附 `/healthz` `/readyz` 探針。
+
+> ⚠️ 首次 build 前需要 `go.sum`:在有 Go 的機器上先跑 `go mod tidy`,或直接用下方「方式 A」讓容器自動產生。
 
 ## 前置(一次性)
 
@@ -75,39 +66,32 @@ docker compose up -d db              # 只起 postgres
 go run ./cmd/server                  # app 連 localhost:5432
 ```
 
-## Step 2 完成定義(DoD)
-
-- [ ] `go mod tidy` 產生 go.sum、`docker compose up --build` 起得來。
-- [ ] log 出現「套用資料庫 migration」「資料庫連線就緒」。
-- [ ] `/readyz` 回 `{"status":"ready"}`;把 db 停掉後 `/readyz` 變 503。
-- [ ] 進 postgres 看得到 8 張表(`\dt`)與 goose 紀錄表 `goose_db_version`。
-
 ## 管理台(前端)
 
 部署後直接開瀏覽器(同源,前端 embed 在 binary 裡):
 
 ```text
-http://localhost:8080/          # 或 http://<tailscale-ip>:8080/
+http://localhost:8080/          # 或 http://<主機 IP>:8080/
 ```
 
 依序操作:選/建組織 → 建門市 → 選門市 → 建員工 → 設**營業時段 + 逐小時需求人數**(拖曳塗選網格)→ 看**逐小時缺口 heatmap**(需求 vs 可上、未填名單)。
 選定的組織/門市會記在 localStorage,**重整頁面自動還原**(真資料仍回 DB)。全部透過 `fetch` 打下面的 JSON API。
 
-### 員工填班(magic-link,多店一連結 v1.5)
+### 員工填班(magic-link,一員工一連結、可跨店)
 
 1. 管理台員工列點「發填班連結」→ 取得 `http://<host>:8080/a/<token>`(**綁員工、不綁門市**,自動複製);需要時用「門市」鈕調整他能填哪些店(新員工預設全店)。
 2. 把連結傳給員工;員工**免註冊**點開 → **先選門市**(只列他被指派的店,單店自動進)→ 在「時段 × 星期」網格用 when2meet 式**拖曳塗選**意願(未塗=不能上),按儲存。
 3. token 只存 SHA-256 hash;一人一條長期連結,可跨其門市分別填班。重開會帶出先前填的(整批覆寫),並記「已提交」標記(缺口的「未填名單」據此判斷)。
 
-### 排班 → 發布 → 員工確認 → 鎖定(v2 + v3)
+### 排班 → 發布 → 員工確認 → 鎖定
 
-1. 管理台第 6 區「排班」:**最快是按「🪄 一鍵建議排班」**(v3-A)——系統用「瓶頸優先貪婪 + 計分」把員工填的可上時段排成建議草稿(只排他們標可上的格,**保證零硬衝突**,排不滿留缺口),老闆再微調。也可手動:選員工 → 「指派/取消」筆刷 → 拖曳排班。格內數字 = 已排/需求;✓ = 排給這位;**紅框** = 他沒標可上(排了就是硬衝突)。存檔即時跑 **Rule Engine**(不可用/跨店雙排=🔴硬;缺口/超週工時=🟡軟)。
+1. 管理台第 6 區「排班」:**最快是按「🪄 一鍵建議排班」**——系統用「瓶頸優先貪婪 + 計分」把員工填的可上時段排成建議草稿(只排他們標可上的格,**保證零硬衝突**,排不滿留缺口),老闆再微調。也可手動:選員工 → 「指派/取消」筆刷 → 拖曳排班。格內數字 = 已排/需求;✓ = 排給這位;**紅框** = 他沒標可上(排了就是硬衝突)。存檔即時跑 **Rule Engine**(不可用/跨店雙排=🔴硬;缺口/超週工時=🟡軟)。
 2. **發布**:有硬衝突擋下(409 標紅);排除後發布 → 凍結快照,並對有班的員工發出**確認**(24h 軟截止)。要再改就自動開新草稿(複製自已發布/鎖定版,舊版留存)。
-3. **員工確認**(v3-B):員工開 `http://<host>:8080/s/<token>` → 選門市看自己**已發布**班表 →「✅ 接受整週」或點 ✓ 格子**回報問題(= 回絕,附理由)**。老闆第 6 區看每位 ✅/⚠️/⏳ + 倒數。
+3. **員工確認**:員工開 `http://<host>:8080/s/<token>` → 選門市看自己**已發布**班表 →「✅ 接受整週」或點 ✓ 格子**回報問題(= 回絕,附理由)**。老闆第 6 區看每位 ✅/⚠️/⏳ + 倒數。
 4. **鎖定**:老闆按「🔒 鎖定」→ 版本 `locked` 定案(未全確認會提醒;店長說了算)。鎖定後員工不可再回應;要改需重新發布新版。
 5. **匯出 CSV**:連續小時自動併成班段(員工/星期/起迄/時數),Excel 可開。
 
-## API(Step 3)
+## API
 
 JSON CRUD,用 curl 走一遍垂直切片:建組織 → 建門市/員工 → 列出。
 
@@ -150,7 +134,7 @@ curl -sS -X POST localhost:8080/api/stores \
 | `PUT /api/store-hours?store_id=` | 設營業時段 `{open_hour, close_hour}` |
 | `GET /api/requirements?store_id=` | 列逐小時需求 `[{weekday, hour, headcount}]`(只回 headcount>0) |
 | `PUT /api/requirements?store_id=` | 整批覆寫逐小時需求 `{requirements:[{weekday, hour, headcount}]}` |
-| `POST /api/access-links` | 產生員工填班 magic-link `{employee_id}` → `{token, url}`(v1.5:綁員工、不綁門市) |
+| `POST /api/access-links` | 產生員工填班 magic-link `{employee_id}` → `{token, url}`(綁員工、不綁門市) |
 | `GET /api/me?token=` | 員工開連結的初始資料(員工 + 可填門市清單) |
 | `GET /api/availability?token=&store_id=` | 某門市的營業時段 + 員工已塗時段 `{open_hour, close_hour, slots:[{weekday, hour, preference_level}]}` |
 | `PUT /api/availability?token=&store_id=` | 整批覆寫該門市可上時段 `{slots:[{weekday, hour, preference_level}]}`(只存正向 1/2、並記提交標記) |
@@ -166,12 +150,12 @@ curl -sS -X POST localhost:8080/api/stores \
 | `POST /api/my-schedule/confirm?token=&store_id=` | 員工「接受整週」→ confirmed(鎖定後擋) |
 | `POST /api/my-schedule/issues?token=&store_id=` | 員工標記某格有問題 `{weekday, hour, note}`(= 回絕,設 declined + 理由) |
 
-> 註:`/api/*`(店長端)尚無身分驗證(任何人可呼叫)——auth 留後續步驟。
+> 註:`/api/*`(店長端)目前尚無身分驗證(任何人可呼叫),為已知限制。
 > 員工端 `/api/me` `/api/availability` 靠 magic-link 的 **token** 認證(token 只存 SHA-256 hash);token **綁員工**,可跨其 membership 的多店填班。
 
-### 營業時段 + 逐小時需求(v1.5 階段 B)
+### 營業時段 + 逐小時需求
 
-固定 4 班別模板已淘汰,改為「**老闆設營業時段 + 逐小時需求人數**」。建門市時用 DB 預設時段(09–22),之後在管理台調整。
+老闆設**營業時段 + 逐小時需求人數**;建門市時用 DB 預設時段(09–22),之後在管理台調整。
 
 ```bash
 # 用上面的 $ORG_ID 建門市,拿 store_id
@@ -215,14 +199,14 @@ docker compose --profile tools up -d adminer   # 起 Adminer
 docker compose stop adminer                     # 查完關掉
 ```
 
-> ⚠️ Adminer 是 DB 管理介面,**只開在 homelab/內網**,別曝露到公網或 prod。
+> ⚠️ Adminer 是 DB 管理介面,**只開在內網/本機**,別曝露到公網或 prod。
 
 ### 方案 2:DBeaver(桌面,連已開放的 5432)
 
 compose 已 `ports: 5432:5432`,桌面 DBeaver 直接連:
 
 ```text
-Host: <homelab-ip 或 tailscale-ip>   Port: 5432
+Host: <主機 IP>   Port: 5432
 DB: schedule_lite   User: schedule   Password: schedule
 ```
 
@@ -251,15 +235,16 @@ internal/
     config/                 env 設定載入
     httpx/                  探針 + JSON 輔助
     pg/                     pgx 連線池 + goose migration 執行
-  store/                    組織/門市/員工/營業時段/需求/填班 domain(models + repo + handler)
-                            repo_availability.go / handler_availability.go = Step 5 magic-link 填班
+  store/                    全部業務 domain(組織/門市/員工/membership/時段/需求/填班/缺口/排班/兩階段)
+                            handler_*.go → repo_*.go 分層;rules.go / autofill.go 為純函式
 db/
   embed.go                  把 migration 檔 embed 進 binary
   migrations/               SQL migration(goose 格式)
 web/                        前端(CSR,依使用者分兩個子目錄)
   admin/                    管理台(店長):index.html / app.js,入口 /
-  staff/                    員工填班頁:availability.html / availability.js,入口 /a/{token}
-  style.css                 兩頁共用樣式(資源統一由 /static/ 服務)
+  staff/                    員工頁:availability.*(填班 /a/{token})、schedule.*(看班/確認 /s/{token})
+  dragGrid.js               when2meet 拖曳塗選共用元件
+  style.css                 共用樣式(資源統一由 /static/ 服務)
   embed.go                  把前端 embed 進 binary,同源服務
 scripts/
   deploy.sh                 build + 起 compose + 驗證探針
